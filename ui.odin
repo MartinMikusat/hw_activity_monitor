@@ -207,8 +207,9 @@ ui_status_button_screen_rect :: proc() -> Rect {
 	if button_window == nil {
 		return {}
 	}
-	frame := msg_rect_0(ui_state.button, sel_registerName("frame"))
-	return msg_rect_rect(button_window, sel_registerName("convertRectToScreen:"), frame)
+	bounds := msg_rect_0(ui_state.button, sel_registerName("bounds"))
+	in_window := msg_rect_rect_id(ui_state.button, sel_registerName("convertRect:toView:"), bounds, nil)
+	return msg_rect_rect(button_window, sel_registerName("convertRectToScreen:"), in_window)
 }
 
 // ---------------------------------------------------------------- snapshots
