@@ -1,7 +1,8 @@
 # hw_activity_monitor
 
-A small macOS daemon that notices runaway processes and posts a Notification
-Center banner. Notify only: it never kills anything.
+A small macOS menu bar watchdog for runaway processes. A status item shows
+total CPU percent; clicking it opens a popover with the top process groups and
+their processes. Notify only: it never kills anything.
 
 It watches the whole process table, groups CPU by executable name, and alerts
 when a group stays above a CPU budget for long enough. Grouping is what catches
@@ -33,6 +34,17 @@ minimal `LSUIElement` bundle, ad-hoc signed) and loads
 `~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
 (`RunAtLoad`, `KeepAlive`, `ProcessType Background`). The first installed run
 asks for notification permission; without it alerts only reach the log.
+
+## Menu bar
+
+The status item shows the sampled total CPU as a share of all cores ("12%").
+Clicking it opens a transient popover: total CPU and process count, then the
+top groups by CPU (highest first) with their busiest processes underneath,
+pids included. The list refreshes on every sampling tick, which
+`interval_seconds` controls, and once more when the popover opens.
+
+The same tick evaluates alert rules, so a shorter interval also tightens the
+alert resolution; the default is 5 seconds.
 
 ## Configuration
 

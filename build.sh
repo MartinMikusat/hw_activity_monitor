@@ -24,6 +24,6 @@ esac
 # notify.odin looks up through the Objective-C runtime at startup.
 # shellcheck disable=SC2086
 hw-odin build "$ROOT" $FLAGS \
-  -extra-linker-flags:"-framework Foundation -framework UserNotifications" \
+  -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications" \
   -out:"$BUILD/hw_activity_monitor"
 echo "[hw_activity_monitor] built $BUILD/hw_activity_monitor ($MODE)"

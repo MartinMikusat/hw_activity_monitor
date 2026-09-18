@@ -184,26 +184,6 @@ notify_user_notification :: proc(title, body: string) -> bool {
 	return true
 }
 
-// wait_with_run_loop sleeps while servicing the main run loop. The daemon has
-// no NSApplication, and UNUserNotificationCenter delivers its authorization
-// and delivery callbacks through the run loop, so the interval between scans
-// doubles as pump time. Development runs (osascript backend) just sleep.
-wait_with_run_loop :: proc(seconds: f64) {
-	if objc_send_address == nil || notify_backend != .User_Notification {
-		time.sleep(time.Duration(seconds * f64(time.Second)))
-		return
-	}
-	pool := msg_id0(objc_getClass("NSAutoreleasePool"), sel_registerName("new"))
-	defer msg_void0(pool, sel_registerName("drain"))
-	date := msg_id_f64(
-		objc_getClass("NSDate"),
-		sel_registerName("dateWithTimeIntervalSinceNow:"),
-		seconds,
-	)
-	run_loop := msg_id0(objc_getClass("NSRunLoop"), sel_registerName("currentRunLoop"))
-	msg_void_id(run_loop, sel_registerName("runUntilDate:"), date)
-}
-
 // notify_osascript shows a banner through osascript. The message travels as
 // script arguments, so process names need no escaping.
 notify_osascript :: proc(title, body: string) -> bool {

@@ -1,5 +1,5 @@
-// Minimal Objective-C runtime glue for notification delivery, mirroring the
-// helper set in hw_calendar/darwin.odin, trimmed to what notifications need.
+// Minimal Objective-C runtime glue for the menu bar UI and notification
+// delivery, mirroring the helper set in hw_calendar/darwin.odin.
 
 package activity_monitor
 
@@ -9,10 +9,19 @@ import "core:strings"
 Id :: rawptr
 Sel :: rawptr
 
+Point :: struct {x, y: f64}
+Size :: struct {width, height: f64}
+Rect :: struct {origin: Point, size: Size}
+
 foreign import objc "system:objc"
 foreign objc {
-	objc_getClass    :: proc "c" (name: cstring) -> Id ---
-	sel_registerName :: proc "c" (name: cstring) -> Sel ---
+	objc_getClass          :: proc "c" (name: cstring) -> Id ---
+	objc_getProtocol       :: proc "c" (name: cstring) -> Id ---
+	sel_registerName       :: proc "c" (name: cstring) -> Sel ---
+	objc_allocateClassPair :: proc "c" (superclass: Id, name: cstring, extra: uint) -> Id ---
+	objc_registerClassPair :: proc "c" (cls: Id) ---
+	class_addMethod        :: proc "c" (cls: Id, name: Sel, imp: rawptr, types: cstring) -> bool ---
+	class_addProtocol      :: proc "c" (cls: Id, protocol: Id) -> bool ---
 }
 
 objc_send_address: rawptr
@@ -44,6 +53,11 @@ msg_void_id :: proc(receiver: Id, selector: Sel, argument: Id) {
 	send(receiver, selector, argument)
 }
 
+msg_id_id :: proc(receiver: Id, selector: Sel, argument: Id) -> Id {
+	send := transmute(proc "c" (Id, Sel, Id) -> Id)objc_send_address
+	return send(receiver, selector, argument)
+}
+
 msg_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) -> Id {
 	send := transmute(proc "c" (Id, Sel, Id, Id, Id) -> Id)objc_send_address
 	return send(receiver, selector, a, b, c)
@@ -52,6 +66,64 @@ msg_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) -> Id {
 msg_id_f64 :: proc(receiver: Id, selector: Sel, value: f64) -> Id {
 	send := transmute(proc "c" (Id, Sel, f64) -> Id)objc_send_address
 	return send(receiver, selector, value)
+}
+
+msg_void_i :: proc(receiver: Id, selector: Sel, value: int) {
+	send := transmute(proc "c" (Id, Sel, int))objc_send_address
+	send(receiver, selector, value)
+}
+
+msg_void_sel :: proc(receiver: Id, selector: Sel, value: Sel) {
+	send := transmute(proc "c" (Id, Sel, Sel))objc_send_address
+	send(receiver, selector, value)
+}
+
+msg_void_bool :: proc(receiver: Id, selector: Sel, value: bool) {
+	send := transmute(proc "c" (Id, Sel, bool))objc_send_address
+	send(receiver, selector, value)
+}
+
+msg_void_f64 :: proc(receiver: Id, selector: Sel, value: f64) {
+	send := transmute(proc "c" (Id, Sel, f64))objc_send_address
+	send(receiver, selector, value)
+}
+
+msg_void_size :: proc(receiver: Id, selector: Sel, value: Size) {
+	send := transmute(proc "c" (Id, Sel, Size))objc_send_address
+	send(receiver, selector, value)
+}
+
+msg_id_rect :: proc(receiver: Id, selector: Sel, value: Rect) -> Id {
+	send := transmute(proc "c" (Id, Sel, Rect) -> Id)objc_send_address
+	return send(receiver, selector, value)
+}
+
+msg_bool_0 :: proc(receiver: Id, selector: Sel) -> bool {
+	send := transmute(proc "c" (Id, Sel) -> bool)objc_send_address
+	return send(receiver, selector)
+}
+
+msg_u64_0 :: proc(receiver: Id, selector: Sel) -> u64 {
+	send := transmute(proc "c" (Id, Sel) -> u64)objc_send_address
+	return send(receiver, selector)
+}
+
+msg_rect_0 :: proc(receiver: Id, selector: Sel) -> Rect {
+	send := transmute(proc "c" (Id, Sel) -> Rect)objc_send_address
+	return send(receiver, selector)
+}
+
+msg_void_rect_id_i :: proc(receiver: Id, selector: Sel, rect: Rect, view: Id, edge: int) {
+	send := transmute(proc "c" (Id, Sel, Rect, Id, int))objc_send_address
+	send(receiver, selector, rect, view, edge)
+}
+
+msg_timer :: proc(
+	class_obj: Id, selector: Sel,
+	interval: f64, target: Id, selector_arg: Sel, user_info: Id, repeats: bool,
+) -> Id {
+	send := transmute(proc "c" (Id, Sel, f64, Id, Sel, Id, bool) -> Id)objc_send_address
+	return send(class_obj, selector, interval, target, selector_arg, user_info, repeats)
 }
 
 nsstring :: proc(value: string) -> Id {

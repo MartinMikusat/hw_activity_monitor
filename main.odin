@@ -1,9 +1,10 @@
-// hw_activity_monitor — a small launchd daemon that notices runaway processes.
+// hw_activity_monitor — a menu bar watchdog for runaway processes.
 //
-// It samples per-process CPU through libproc every few seconds, groups the
-// samples by executable name, and posts a Notification Center banner when a
-// group stays above the configured CPU budget for long enough. Notify only: it
-// never kills anything.
+// On a timer the app samples per-process CPU through libproc, groups the
+// samples by executable name, posts a Notification Center banner when a group
+// stays above its CPU budget, and appends JSONL events. A status item shows
+// total CPU percent; clicking it opens a popover with the top groups and their
+// processes. Notify only: it never kills anything.
 
 package activity_monitor
 
@@ -11,6 +12,16 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+
+Monitor_State :: struct {
+	config:  Config,
+	policy:  Policy,
+	log:     Log,
+	sampler: Sampler,
+	tracker: Tracker,
+}
+
+monitor: Monitor_State
 
 main :: proc() {
 	once := false
@@ -39,11 +50,11 @@ main :: proc() {
 		run_once(config)
 		return
 	}
-	run_loop(config)
+	run_app(config)
 }
 
 // run_once samples twice and prints the busiest groups; a manual sanity check
-// without starting a notification loop.
+// without a menu bar item or notification loop.
 run_once :: proc(config: Config) {
 	sampler: Sampler
 	defer sampler_destroy(&sampler)
@@ -62,24 +73,18 @@ run_once :: proc(config: Config) {
 	free_all(context.temp_allocator)
 }
 
-run_loop :: proc(config: Config) {
-	log := log_open()
-	defer log_close(log)
-	backend := notify_init(log)
-
-	policy := Policy{
+run_app :: proc(config: Config) {
+	monitor.config = config
+	monitor.policy = Policy{
 		cpu_percent = config.cpu_percent,
 		sustained   = time.Duration(config.sustained_seconds * f64(time.Second)),
 		cooldown    = time.Duration(config.cooldown_seconds * f64(time.Second)),
 		safelist    = config.safelist,
 	}
+	monitor.log = log_open()
+	backend := notify_init(monitor.log)
 
-	sampler: Sampler
-	defer sampler_destroy(&sampler)
-	tracker: Tracker
-	defer tracker_destroy(&tracker)
-
-	log_event(log, "started", fmt.tprintf(
+	log_event(monitor.log, "started", fmt.tprintf(
 		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",
 		os.get_pid(),
 		config.interval_seconds,
@@ -89,24 +94,45 @@ run_loop :: proc(config: Config) {
 		log_string(fmt.tprintf("%v", backend)),
 	))
 
-	for {
-		samples := sampler_scan(&sampler)
-		groups := group_cpu(samples)
-		alerts := tracker_evaluate(&tracker, groups, time.tick_now(), policy)
-		for alert in alerts {
-			body := alert_description(alert)
-			notified := notify("Runaway process", body)
-			log_event(log, "alert", fmt.tprintf(
-				"\"name\":%s,\"processes\":%d,\"cpu_percent\":%.1f,\"sustained_seconds\":%.0f,\"pids\":[%s],\"notified\":%v",
-				log_string(alert.name),
-				alert.count,
-				alert.cpu_percent,
-				time.duration_seconds(alert.sustained),
-				alert_pid_list(alert),
-				notified,
-			))
-		}
-		free_all(context.temp_allocator)
-		wait_with_run_loop(config.interval_seconds)
+	if !ui_start(config, monitor_tick) {
+		// No window server or AppKit: keep alerting without the status item.
+		log_event(monitor.log, "ui_unavailable", "\"fallback\":\"headless\"")
+		run_headless()
+		return
 	}
+	monitor_tick() // first paint before the run loop takes over
+	ui_run()
+}
+
+// run_headless keeps alerting without a status item; used only when the UI
+// cannot start.
+run_headless :: proc() {
+	for {
+		monitor_tick()
+		time.sleep(time.Duration(monitor.config.interval_seconds * f64(time.Second)))
+	}
+}
+
+// monitor_tick is one sampling pass: scan, evaluate alerts, log and notify,
+// then refresh the menu bar. Called by the UI timer on the main thread, or by
+// the headless loop.
+monitor_tick :: proc() {
+	samples := sampler_scan(&monitor.sampler)
+	groups := group_cpu(samples)
+	alerts := tracker_evaluate(&monitor.tracker, groups, time.tick_now(), monitor.policy)
+	for alert in alerts {
+		body := alert_description(alert)
+		notified := notify("Runaway process", body)
+		log_event(monitor.log, "alert", fmt.tprintf(
+			"\"name\":%s,\"processes\":%d,\"cpu_percent\":%.1f,\"sustained_seconds\":%.0f,\"pids\":[%s],\"notified\":%v",
+			log_string(alert.name),
+			alert.count,
+			alert.cpu_percent,
+			time.duration_seconds(alert.sustained),
+			alert_pid_list(alert),
+			notified,
+		))
+	}
+	ui_update(ui_total_percent(samples, ui_active_cpu_count()), groups, samples, len(samples))
+	free_all(context.temp_allocator)
 }

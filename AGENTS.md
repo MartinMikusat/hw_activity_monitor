@@ -5,6 +5,14 @@ reports runaway CPU and never kills anything.
 
 - Build with `./build.sh [debug|release]`. Test with `./test.sh`. Install and
   remove with `./install.sh` / `./uninstall.sh`.
+- UI runs on the main thread: `NSApplication` owns the run loop, an `NSTimer`
+  calls `monitor_tick` (main.odin) once per `interval_seconds`, and `ui.odin`
+  owns the status item, popover, and the dynamically registered table
+  data-source/delegate class. Never touch AppKit off the main thread; if
+  `ui_start` fails, `run_headless` keeps alerting with no UI.
+- Popover rows come from `ui_build_rows` (ui.odin), which is pure apart from
+  its allocator and covered by `ui_test.odin`. Rows live in a per-tick arena
+  that is freed at the start of the next update.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the
