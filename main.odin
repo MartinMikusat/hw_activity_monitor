@@ -65,6 +65,7 @@ run_once :: proc(config: Config) {
 run_loop :: proc(config: Config) {
 	log := log_open()
 	defer log_close(log)
+	backend := notify_init(log)
 
 	policy := Policy{
 		cpu_percent = config.cpu_percent,
@@ -79,11 +80,12 @@ run_loop :: proc(config: Config) {
 	defer tracker_destroy(&tracker)
 
 	log_write(log, fmt.tprintf(
-		"started: interval %.0fs, budget %.0f%% sustained %.0fs, cooldown %.0fs",
+		"started: interval %.0fs, budget %.0f%% sustained %.0fs, cooldown %.0fs, notifications %v",
 		config.interval_seconds,
 		config.cpu_percent,
 		config.sustained_seconds,
 		config.cooldown_seconds,
+		backend,
 	))
 
 	for {
@@ -93,11 +95,11 @@ run_loop :: proc(config: Config) {
 		for alert in alerts {
 			body := alert_description(alert)
 			log_write(log, fmt.tprintf("alert: %s", body))
-			if !notify_osascript("Runaway process", body) {
-				log_write(log, "notification failed (osascript)")
+			if !notify("Runaway process", body) {
+				log_write(log, "notification failed")
 			}
 		}
 		free_all(context.temp_allocator)
-		time.sleep(time.Duration(config.interval_seconds * f64(time.Second)))
+		wait_with_run_loop(config.interval_seconds)
 	}
 }

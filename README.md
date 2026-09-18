@@ -23,13 +23,16 @@ together instead of N separate small numbers.
 ```
 ./build.sh [debug|release]   # build
 ./test.sh                    # rule-engine tests + compile check
-./install.sh                 # build, install to ~/.local/bin, load LaunchAgent
-./uninstall.sh               # unload and remove binary (config and logs kept)
-hw_activity_monitor --once       # sample twice, print the busiest groups
+./install.sh                 # build, install the app bundle, load LaunchAgent
+./uninstall.sh               # unload and remove bundle (config and logs kept)
+hw_activity_monitor --once   # sample twice, print the busiest groups
 ```
 
-Install loads `~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
-(`RunAtLoad`, `KeepAlive`, `ProcessType Background`). Logs:
+Install copies the binary into `~/Applications/hw_activity_monitor.app` (a
+minimal `LSUIElement` bundle, ad-hoc signed) and loads
+`~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
+(`RunAtLoad`, `KeepAlive`, `ProcessType Background`). The first installed run
+asks for notification permission; without it alerts only reach the log. Logs:
 `~/Library/Logs/hw_activity_monitor.log`.
 
 ## Configuration
@@ -56,10 +59,12 @@ their default):
   Defaults cover compilers and system processes because builds legitimately peg
   every core. `hw_activity_monitor` itself is always safelisted.
 
-## Notification attribution
+## Notification delivery
 
-Notifications are delivered through `osascript`, so they appear as **Script
-Editor**. Approve notifications for Script Editor once, or the banners are
-dropped silently. A bare binary cannot use `UNUserNotificationCenter`; wrapping
-the daemon in a minimal `.app` bundle (or a signed helper) is the upgrade path
-if proper attribution or action buttons are wanted.
+The installed daemon runs from its `.app` bundle and posts through
+`UNUserNotificationCenter`, so banners are attributed to hw_activity_monitor
+and the system asks for permission once. A bare binary has no bundle
+identifier and cannot post that way, so development runs (the binary in
+`build/`) fall back to `osascript`; macOS usually drops those banners unless
+Script Editor has notification permission. Alerts always land in the log
+regardless of delivery.
