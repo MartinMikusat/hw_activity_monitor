@@ -68,6 +68,21 @@ msg_id_f64 :: proc(receiver: Id, selector: Sel, value: f64) -> Id {
 	return send(receiver, selector, value)
 }
 
+msg_id_id_f64 :: proc(receiver: Id, selector: Sel, first: Id, second: f64) -> Id {
+	send := transmute(proc "c" (Id, Sel, Id, f64) -> Id)objc_send_address
+	return send(receiver, selector, first, second)
+}
+
+msg_id_id_u :: proc(receiver: Id, selector: Sel, first: Id, second: uint) -> Id {
+	send := transmute(proc "c" (Id, Sel, Id, uint) -> Id)objc_send_address
+	return send(receiver, selector, first, second)
+}
+
+msg_size_0 :: proc(receiver: Id, selector: Sel) -> Size {
+	send := transmute(proc "c" (Id, Sel) -> Size)objc_send_address
+	return send(receiver, selector)
+}
+
 msg_void_i :: proc(receiver: Id, selector: Sel, value: int) {
 	send := transmute(proc "c" (Id, Sel, int))objc_send_address
 	send(receiver, selector, value)
