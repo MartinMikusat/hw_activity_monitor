@@ -38,13 +38,20 @@ asks for notification permission; without it alerts only reach the log.
 ## Menu bar
 
 The status item shows the sampled total CPU as a share of all cores ("12%").
-Clicking it opens a transient popover: total CPU and process count, then the
-top groups by CPU (highest first) with their busiest processes underneath,
-pids included. The popover sizes itself to the list, up to a maximum height,
-then scrolls.
+Clicking it opens the panel: total CPU and process count, then the top groups
+by CPU (highest first) with their busiest processes underneath, pids included.
+The panel sizes itself to the list, up to a maximum height, then scrolls.
+
+The panel is not an AppKit view hierarchy: `panel.odin` lays the list out with
+hw_clay every frame and draws it through the ui_framework renderer (CoreText
+text, draw list, Metal) into a borderless non-activating panel backed by a
+CAMetalLayer. Opening and closing animate scale, translation, and opacity in
+the draw list, driven by a display link that stays paused whenever the panel is
+idle. AppKit supplies only the status item, the window surface, and input
+events.
 
 Sampling runs on a worker thread and reaches the UI as finished snapshots, so
-opening the popover never waits on a scan of the process table. The list
+opening the panel never waits on a scan of the process table. The list
 refreshes on every sampling tick, which `interval_seconds` controls.
 
 ## Configuration

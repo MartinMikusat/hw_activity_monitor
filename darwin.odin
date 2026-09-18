@@ -9,6 +9,21 @@ import "core:strings"
 Id :: rawptr
 Sel :: rawptr
 
+NSACCESSORY_ACTIVATION_POLICY :: 1
+
+// The main dispatch queue is the global `_dispatch_main_q`: in C
+// `dispatch_get_main_queue()` is a macro over its address. Snapshots hop from
+// the sampler thread to the main thread through dispatch_async_f.
+foreign import dispatch "system:System"
+foreign dispatch {
+	dispatch_async_f  :: proc(queue: rawptr, ctx: rawptr, work: proc "c" (rawptr)) ---
+	_dispatch_main_q: Dispatch_Queue_Storage
+}
+
+Dispatch_Queue_Storage :: struct {
+	_opaque: u8,
+}
+
 Point :: struct {x, y: f64}
 Size :: struct {width, height: f64}
 Rect :: struct {origin: Point, size: Size}
@@ -131,6 +146,11 @@ msg_u64_0 :: proc(receiver: Id, selector: Sel) -> u64 {
 msg_rect_0 :: proc(receiver: Id, selector: Sel) -> Rect {
 	send := transmute(proc "c" (Id, Sel) -> Rect)objc_send_address
 	return send(receiver, selector)
+}
+
+msg_rect_rect :: proc(receiver: Id, selector: Sel, value: Rect) -> Rect {
+	send := transmute(proc "c" (Id, Sel, Rect) -> Rect)objc_send_address
+	return send(receiver, selector, value)
 }
 
 msg_void_rect_id_i :: proc(receiver: Id, selector: Sel, rect: Rect, view: Id, edge: int) {

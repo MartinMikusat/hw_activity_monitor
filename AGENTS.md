@@ -5,18 +5,26 @@ reports runaway CPU and never kills anything.
 
 - Build with `./build.sh [debug|release]`. Test with `./test.sh`. Install and
   remove with `./install.sh` / `./uninstall.sh`.
-- UI: `ui.odin` owns the status item, popover, and the dynamically registered
-  table data-source/delegate class. The main thread only draws; `monitor_tick`
-  runs on a worker thread (main.odin), builds a `Ui_Snapshot`, and posts it with
+- UI: `ui.odin` owns the status item and the snapshot model; `panel.odin` owns
+  the clay layout and the draw call; `panel_window.odin` owns the NSPanel,
+  CAMetalLayer, input, and the display-link clock; `panel_animation.odin` is
+  the pure open/close math. The main thread only draws; `monitor_tick` runs on
+  a worker thread (main.odin), builds a `Ui_Snapshot`, and posts it with
   `dispatch_async_f` to the main queue, which frees the snapshot it replaced.
   Never sample or touch AppKit off the main thread; if `ui_start` fails,
   `run_headless` keeps alerting with no UI.
+- The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
+  Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
+  reintroduce AppKit view hierarchies for the panel content: layout, text,
+  scrolling, and the animation all run through the draw list. Push opacity and
+  transform around `render_commands` (draw.push_opacity/push_transform). The
+  display link stays paused unless animating or a scroll is settling.
 - `core:thread.create` returns a *suspended* thread: always follow it with
-  `thread.start`, and pass thread data through `thread.data` before starting;
-  a second argument to `create` is the priority, not user data.
-- Popover rows come from `ui_build_rows` (ui.odin), which is pure apart from
-  its allocator and covered by `ui_test.odin`. Only rows cut by the per-group
-  limit get a "… and N more" note.
+  `thread.start`; a second argument to `create` is the priority, not user data.
+- Panel rows come from `ui_build_rows` (ui.odin), which is pure apart from its
+  allocator and covered by `ui_test.odin`. Only rows cut by the per-group limit
+  get a "… and N more" note. `panel_animation_test.odin` covers the curve and
+  transform.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the

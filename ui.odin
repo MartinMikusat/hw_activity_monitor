@@ -1,54 +1,16 @@
-// Menu bar UI: a status item shows total CPU percent; clicking it opens a
-// transient popover with the top process groups and their processes.
+// Status item, snapshot model, and the bridge to the clay panel.
 //
-// The main thread only draws. NSApplication owns the run loop, and snapshots
-// arrive from the sampler thread as dispatch_async_f work items that are
-// applied here (title, row list, popover size). Nothing on the main thread
-// ever samples the process table, so opening the popover animates smoothly.
-// The table's data source and delegate are one dynamically registered
-// Objective-C class whose methods read the rows of the current snapshot.
+// The worker thread samples and posts Ui_Snapshots; this file applies them on
+// the main thread (title, panel content) and owns the pure row model that the
+// panel lays out. Everything inside the panel is drawn by panel.odin.
 
 package activity_monitor
 
-import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
 
-UI_WIDTH :: 440
-UI_MIN_HEIGHT :: 160
-UI_MAX_HEIGHT :: 560
-UI_ROW_HEIGHT :: 20
-UI_GROUP_LIMIT :: 10
-UI_GROUP_MIN_PERCENT :: 0.5
-UI_PROCESS_LIMIT_PER_GROUP :: 4
-UI_PROCESS_MIN_PERCENT :: 1.0
-// The list uses Iosevka; padding follows the same units as the rest of the
-// suite: 1ch horizontally (the font's advance), 0.5rem vertically (half the
-// font size). UI_VALUE_COLUMN_CHARS widens the right column for "100.0%".
-UI_FONT_NAME :: "Iosevka"
-UI_FONT_SIZE :: 12.0
-UI_VALUE_COLUMN_CHARS :: 7
-
-NSRIGHT_TEXT_ALIGNMENT :: 2
-NSACCESSORY_ACTIVATION_POLICY :: 1
-NSPOPOVER_TRANSIENT_BEHAVIOR :: 1
-NSMIN_Y_EDGE :: 1
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
-NSSCROLLER_STYLE_OVERLAY :: 1
-NSBOLD_FONT_MASK :: 2
-
-foreign import dispatch "system:System"
-foreign dispatch {
-	dispatch_async_f :: proc(queue: rawptr, ctx: rawptr, work: proc "c" (rawptr)) ---
-	// The main queue in libdispatch is the global `_dispatch_main_q`, not a
-	// function: `dispatch_get_main_queue()` is a C macro over its address.
-	_dispatch_main_q: Dispatch_Queue_Storage
-}
-
-Dispatch_Queue_Storage :: struct {
-	_opaque: u8,
-}
 
 Ui_Row_Kind :: enum {
 	Header,
@@ -63,7 +25,7 @@ Ui_Row :: struct {
 	value: string,
 }
 
-// Ui_Snapshot owns everything the table reads; the sampler thread builds one,
+// Ui_Snapshot owns everything the panel reads; the sampler thread builds one,
 // hands it to the main thread, and the main thread frees the previous one.
 Ui_Snapshot :: struct {
 	allocator:     runtime.Allocator,
@@ -71,6 +33,16 @@ Ui_Snapshot :: struct {
 	process_count: int,
 	rows:          []Ui_Row,
 }
+
+Ui_State :: struct {
+	app:         Id,
+	status_item: Id,
+	button:      Id,
+	snapshot:    ^Ui_Snapshot,
+}
+
+ui_state: Ui_State
+ui_snapshot_applied: bool
 
 // ------------------------------------------------------------------- model
 
@@ -99,11 +71,11 @@ sort_by_cpu :: proc(samples: []Process_Cpu) {
 	})
 }
 
-// ui_build_rows renders the popover contents: a header, then each top group
-// with its busiest processes underneath. Members below UI_PROCESS_MIN_PERCENT
-// are not counted as hidden; only rows cut by the per-group limit are noted.
-// Every string in the result is allocated with the caller's allocator:
-// ui_snapshot_destroy frees them all, so literals are not allowed here.
+// ui_build_rows renders the panel contents: a header, then each top group with
+// its busiest processes underneath. Members below UI_PROCESS_MIN_PERCENT are
+// not counted as hidden; only rows cut by the per-group limit are noted. Every
+// string is allocated with the caller's allocator so snapshots can be freed
+// wholesale.
 ui_build_rows :: proc(
 	groups: []Group_Cpu,
 	samples: []Process_Cpu,
@@ -178,55 +150,16 @@ ui_build_rows :: proc(
 
 // --------------------------------------------------------------------- app
 
-Ui_State :: struct {
-	app:         Id,
-	status_item: Id,
-	button:      Id,
-	popover:     Id,
-	table:       Id,
-	container:   Id,
-	scroll:      Id,
-	name_column: Id,
-	value_column: Id,
-	font_regular: Id,
-	font_bold:    Id,
-	snapshot:    ^Ui_Snapshot,
-	width:       f64,
-	height:      f64,
-	horizontal_pad: f64,
-	vertical_pad:   f64,
-	value_column_width: f64,
-}
-
-ui_state: Ui_State
-ui_snapshot_applied: bool
-
 ui_start :: proc() -> bool {
 	if !darwin_objc_init() {
 		return false
 	}
-	ui_state.width = UI_WIDTH
-	ui_state.height = UI_MIN_HEIGHT
-	ui_state.vertical_pad = UI_FONT_SIZE * 0.5
-	ui_state.font_regular = ui_load_font(UI_FONT_NAME, UI_FONT_SIZE)
-	if ui_state.font_regular == nil {
-		ui_state.font_regular = msg_id_f64(objc_getClass("NSFont"), sel_registerName("systemFontOfSize:"), UI_FONT_SIZE)
-	}
-	ui_state.font_bold = ui_bold_font(ui_state.font_regular)
-	ui_state.horizontal_pad = msg_size_0(ui_state.font_regular, sel_registerName("maximumAdvancement")).width
-	ui_state.value_column_width = f64(UI_VALUE_COLUMN_CHARS) * ui_state.horizontal_pad
-
 	app := msg_id0(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
 	if app == nil {
 		return false
 	}
 	ui_state.app = app
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), NSACCESSORY_ACTIVATION_POLICY)
-
-	ticker := ui_register_ticker()
-	if ticker == nil {
-		return false
-	}
 
 	status_bar := msg_id0(objc_getClass("NSStatusBar"), sel_registerName("systemStatusBar"))
 	status_item := msg_id_f64(status_bar, sel_registerName("statusItemWithLength:"), NSVARIABLE_STATUS_ITEM_LENGTH)
@@ -240,184 +173,19 @@ ui_start :: proc() -> bool {
 	}
 	ui_state.button = button
 	msg_void_id(button, sel_registerName("setTitle:"), nsstring("—"))
-	msg_void_id(button, sel_registerName("setTarget:"), ticker)
-	msg_void_sel(button, sel_registerName("setAction:"), sel_registerName("togglePopover:"))
 
-	return ui_build_popover(ticker)
-}
-
-// ui_load_font resolves a font by family name; nil means it is not installed.
-ui_load_font :: proc(name: string, size: f64) -> Id {
-	return msg_id_id_f64(
-		objc_getClass("NSFont"),
-		sel_registerName("fontWithName:size:"),
-		nsstring(name),
-		size,
-	)
-}
-
-// ui_bold_font asks the font manager for the bold member of the same family so
-// custom font builds with unusual PostScript names still work.
-ui_bold_font :: proc(font: Id) -> Id {
-	if font == nil {
-		return nil
-	}
-	font_manager := msg_id0(objc_getClass("NSFontManager"), sel_registerName("sharedFontManager"))
-	if font_manager == nil {
-		return font
-	}
-	bold := msg_id_id_u(font_manager, sel_registerName("convertFont:toHaveTrait:"), font, NSBOLD_FONT_MASK)
-	return bold == nil ? font : bold
-}
-
-ui_register_ticker :: proc() -> Id {
-	ticker_class := objc_allocateClassPair(objc_getClass("NSObject"), "ActivityMonitorTicker", 0)
-	if ticker_class == nil {
-		return nil
-	}
-	if !class_addMethod(ticker_class, sel_registerName("togglePopover:"), rawptr(ui_toggle_popover), "v@:@") ||
-	   !class_addMethod(ticker_class, sel_registerName("numberOfRowsInTableView:"), rawptr(ui_table_row_count), "q@:@") ||
-	   !class_addMethod(ticker_class, sel_registerName("tableView:viewForTableColumn:row:"), rawptr(ui_table_cell_view), "@@:@@q") {
-		return nil
-	}
-	if protocol := objc_getProtocol("NSTableViewDataSource"); protocol != nil {
-		_ = class_addProtocol(ticker_class, protocol)
-	}
-	if protocol := objc_getProtocol("NSTableViewDelegate"); protocol != nil {
-		_ = class_addProtocol(ticker_class, protocol)
-	}
-	objc_registerClassPair(ticker_class)
-	return msg_id0(ticker_class, sel_registerName("new"))
-}
-
-ui_build_popover :: proc(ticker: Id) -> bool {
-	frame := Rect{{0, 0}, {UI_WIDTH, UI_MIN_HEIGHT}}
-
-	table := msg_id_rect(
-		msg_id0(objc_getClass("NSTableView"), sel_registerName("alloc")),
-		sel_registerName("initWithFrame:"),
-		frame,
-	)
-	if table == nil {
+	if !panel_window_init() {
 		return false
 	}
-	ui_state.table = table
-	msg_void_id(table, sel_registerName("setHeaderView:"), nil)
-	msg_void_f64(table, sel_registerName("setRowHeight:"), UI_ROW_HEIGHT)
-	msg_void_bool(table, sel_registerName("setAllowsEmptySelection:"), true)
-	msg_void_i(table, sel_registerName("setSelectionHighlightStyle:"), -1)
-	msg_void_id(table, sel_registerName("setBackgroundColor:"), msg_id0(objc_getClass("NSColor"), sel_registerName("clearColor")))
-	msg_void_id(table, sel_registerName("setDataSource:"), ticker)
-	msg_void_id(table, sel_registerName("setDelegate:"), ticker)
-	msg_void_size(table, sel_registerName("setIntercellSpacing:"), Size{0, 2})
-	ui_state.name_column = ui_make_column("name", UI_WIDTH)
-	ui_state.value_column = ui_make_column("value", ui_state.value_column_width)
-	msg_void_id(table, sel_registerName("addTableColumn:"), ui_state.name_column)
-	msg_void_id(table, sel_registerName("addTableColumn:"), ui_state.value_column)
-
-	scroll := msg_id_rect(
-		msg_id0(objc_getClass("NSScrollView"), sel_registerName("alloc")),
-		sel_registerName("initWithFrame:"),
-		frame,
-	)
-	if scroll == nil {
-		return false
-	}
-	ui_state.scroll = scroll
-	msg_void_bool(scroll, sel_registerName("setHasVerticalScroller:"), true)
-	msg_void_bool(scroll, sel_registerName("setAutohidesScrollers:"), true)
-	msg_void_i(scroll, sel_registerName("setScrollerStyle:"), NSSCROLLER_STYLE_OVERLAY)
-	msg_void_bool(scroll, sel_registerName("setDrawsBackground:"), false)
-	msg_void_id(scroll, sel_registerName("setDocumentView:"), table)
-
-	container := msg_id_rect(
-		msg_id0(objc_getClass("NSView"), sel_registerName("alloc")),
-		sel_registerName("initWithFrame:"),
-		frame,
-	)
-	if container == nil {
-		return false
-	}
-	ui_state.container = container
-	msg_void_id(container, sel_registerName("addSubview:"), scroll)
-
-	controller := msg_id0(objc_getClass("NSViewController"), sel_registerName("new"))
-	if controller == nil {
-		return false
-	}
-	msg_void_id(controller, sel_registerName("setView:"), container)
-
-	popover := msg_id0(msg_id0(objc_getClass("NSPopover"), sel_registerName("alloc")), sel_registerName("init"))
-	if popover == nil {
-		return false
-	}
-	msg_void_id(popover, sel_registerName("setContentViewController:"), controller)
-	msg_void_i(popover, sel_registerName("setBehavior:"), NSPOPOVER_TRANSIENT_BEHAVIOR)
-	msg_void_size(popover, sel_registerName("setContentSize:"), Size{UI_WIDTH, UI_MIN_HEIGHT})
-	ui_state.popover = popover
+	msg_void_id(button, sel_registerName("setTarget:"), panel_window.controller)
+	msg_void_sel(button, sel_registerName("setAction:"), sel_registerName("togglePanel:"))
 	return true
 }
 
-ui_make_column :: proc(identifier: string, width: f64) -> Id {
-	column := msg_id_id(
-		msg_id0(objc_getClass("NSTableColumn"), sel_registerName("alloc")),
-		sel_registerName("initWithIdentifier:"),
-		nsstring(identifier),
-	)
-	if column != nil {
-		msg_void_f64(column, sel_registerName("setWidth:"), width)
-	}
-	return column
-}
-
-// ui_resize sizes the popover to its content up to UI_MAX_HEIGHT and lays the
-// list out inside 1ch horizontal / 0.5rem vertical padding. Column widths come
-// from the clip view, so a legacy scroller gutter cannot clip the values. The
-// popover keeps its current size while it is open so the list does not jump
-// under the pointer.
-ui_resize :: proc(height: f64) {
-	if ui_state.popover == nil || ui_state.container == nil || ui_state.scroll == nil || ui_state.table == nil {
-		return
-	}
-	if msg_bool_0(ui_state.popover, sel_registerName("isShown")) {
-		return
-	}
-	if abs(height - ui_state.height) < 1 {
-		return
-	}
-	ui_state.height = height
-	frame := Rect{{0, 0}, {ui_state.width, height}}
-	msg_void_size(ui_state.popover, sel_registerName("setContentSize:"), Size{ui_state.width, height})
-	msg_void_rect(ui_state.container, sel_registerName("setFrame:"), frame)
-
-	horizontal_pad := ui_state.horizontal_pad
-	vertical_pad := ui_state.vertical_pad
-	content := Rect {
-		{horizontal_pad, vertical_pad},
-		{ui_state.width - 2 * horizontal_pad, height - 2 * vertical_pad},
-	}
-	msg_void_rect(ui_state.scroll, sel_registerName("setFrame:"), content)
-	msg_void0(ui_state.scroll, sel_registerName("tile"))
-
-	clip_bounds := msg_rect_0(msg_id0(ui_state.scroll, sel_registerName("contentView")), sel_registerName("bounds"))
-	msg_void_rect(ui_state.table, sel_registerName("setFrame:"), Rect{{0, 0}, clip_bounds.size})
-	value_width := min(ui_state.value_column_width, clip_bounds.size.width)
-	msg_void_f64(ui_state.name_column, sel_registerName("setWidth:"), clip_bounds.size.width - value_width)
-	msg_void_f64(ui_state.value_column, sel_registerName("setWidth:"), value_width)
-}
-
-// ui_run hands control to AppKit; it only returns when the app terminates.
 ui_run :: proc() {
 	if ui_state.app != nil {
 		msg_void0(ui_state.app, sel_registerName("run"))
 	}
-}
-
-font_family_name :: proc(font: Id) -> string {
-	if font == nil {
-		return ""
-	}
-	return nsstring_to_string(msg_id0(font, sel_registerName("familyName")))
 }
 
 ui_active_cpu_count :: proc() -> int {
@@ -428,6 +196,22 @@ ui_active_cpu_count :: proc() -> int {
 	count := msg_u64_0(info, sel_registerName("activeProcessorCount"))
 	return count == 0 ? 1 : int(count)
 }
+
+// ui_status_button_screen_rect reports the status item's frame in screen
+// coordinates; the panel anchors to it.
+ui_status_button_screen_rect :: proc() -> Rect {
+	if ui_state.button == nil {
+		return {}
+	}
+	button_window := msg_id0(ui_state.button, sel_registerName("window"))
+	if button_window == nil {
+		return {}
+	}
+	frame := msg_rect_0(ui_state.button, sel_registerName("frame"))
+	return msg_rect_rect(button_window, sel_registerName("convertRectToScreen:"), frame)
+}
+
+// ---------------------------------------------------------------- snapshots
 
 // ui_post_snapshot builds one snapshot for the main thread. Sampler thread
 // only: rows and strings belong to the snapshot until the main thread frees it.
@@ -451,8 +235,8 @@ ui_apply_snapshot_c :: proc "c" (raw_snapshot: rawptr) {
 	ui_apply_snapshot((^Ui_Snapshot)(raw_snapshot))
 }
 
-// ui_apply_snapshot runs on the main thread: title, popover size, and table
-// contents, then frees the snapshot it replaced.
+// ui_apply_snapshot runs on the main thread: title, panel content, then frees
+// the snapshot it replaced.
 ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 	if ui_state.button != nil {
 		msg_void_id(
@@ -465,20 +249,9 @@ ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 	ui_state.snapshot = snapshot
 	if !ui_snapshot_applied {
 		ui_snapshot_applied = true
-		log_event(monitor.log, "ui_ready", fmt.tprintf(
-			"\"rows\":%d,\"font\":%s",
-			len(snapshot.rows),
-			log_string(font_family_name(ui_state.font_regular)),
-		))
+		log_event(monitor.log, "ui_ready", fmt.tprintf("\"rows\":%d,\"panel\":\"clay\"", len(snapshot.rows)))
 	}
-	ui_resize(clamp(
-		2 * ui_state.vertical_pad + f64(len(snapshot.rows) * UI_ROW_HEIGHT),
-		UI_MIN_HEIGHT,
-		UI_MAX_HEIGHT,
-	))
-	if ui_state.table != nil {
-		msg_void0(ui_state.table, sel_registerName("reloadData"))
-	}
+	panel_content_changed()
 	if previous != nil {
 		ui_snapshot_destroy(previous)
 	}
@@ -495,70 +268,4 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 	}
 	delete(snapshot.rows, snapshot.allocator)
 	free(snapshot, snapshot.allocator)
-}
-
-// --------------------------------------------------------------- callbacks
-
-ui_toggle_popover :: proc "c" (self: Id, cmd: Sel, sender: Id) {
-	context = runtime.default_context()
-	if ui_state.popover == nil || ui_state.button == nil {
-		return
-	}
-	if msg_bool_0(ui_state.popover, sel_registerName("isShown")) {
-		msg_void0(ui_state.popover, sel_registerName("close"))
-		return
-	}
-	bounds := msg_rect_0(ui_state.button, sel_registerName("bounds"))
-	msg_void_rect_id_i(
-		ui_state.popover,
-		sel_registerName("showRelativeToRect:ofView:preferredEdge:"),
-		bounds,
-		ui_state.button,
-		NSMIN_Y_EDGE,
-	)
-}
-
-ui_table_row_count :: proc "c" (self: Id, cmd: Sel, table: Id) -> i64 {
-	context = runtime.default_context()
-	if ui_state.snapshot == nil {
-		return 0
-	}
-	return i64(len(ui_state.snapshot.rows))
-}
-
-ui_table_cell_view :: proc "c" (self: Id, cmd: Sel, table: Id, column: Id, row: i64) -> Id {
-	context = runtime.default_context()
-	if ui_state.snapshot == nil || row < 0 || int(row) >= len(ui_state.snapshot.rows) {
-		return nil
-	}
-	entry := ui_state.snapshot.rows[row]
-	is_value_column := nsstring_to_string(msg_id0(column, sel_registerName("identifier"))) == "value"
-
-	text := entry.name
-	if is_value_column {
-		text = entry.value
-	}
-	label := msg_id_id(objc_getClass("NSTextField"), sel_registerName("labelWithString:"), nsstring(text))
-	if label == nil {
-		return nil
-	}
-	font := ui_state.font_regular
-	switch entry.kind {
-	case .Header, .Group:
-		font = ui_state.font_bold
-	case .Note:
-		msg_void_id(
-			label,
-			sel_registerName("setTextColor:"),
-			msg_id0(objc_getClass("NSColor"), sel_registerName("secondaryLabelColor")),
-		)
-	case .Process:
-	}
-	if font != nil {
-		msg_void_id(label, sel_registerName("setFont:"), font)
-	}
-	if is_value_column {
-		msg_void_i(label, sel_registerName("setAlignment:"), NSRIGHT_TEXT_ALIGNMENT)
-	}
-	return label
 }
