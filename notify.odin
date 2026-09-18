@@ -64,20 +64,20 @@ notification_auth_completed :: proc "c" (block: ^Notification_Auth_Block, grante
 	context = runtime.default_context()
 	if error != nil {
 		description := nsstring_to_string(msg_id0(error, sel_registerName("localizedDescription")))
-		log_write(notify_log, fmt.tprintf("notification authorization failed: %s", description))
+		log_event(notify_log, "notification_authorization", fmt.tprintf(
+			"\"granted\":false,\"error\":%s",
+			log_string(description),
+		))
 		return
 	}
-	if granted {
-		log_write(notify_log, "notification authorization granted")
-	} else {
-		log_write(notify_log, "notification authorization denied; alerts only reach the log")
-	}
+	log_event(notify_log, "notification_authorization", fmt.tprintf("\"granted\":%v", granted))
 }
 
 notification_add_completed :: proc "c" (block: ^Notification_Add_Block, error: Id) {
 	context = runtime.default_context()
 	if error != nil {
-		log_write(notify_log, "notification delivery failed")
+		description := nsstring_to_string(msg_id0(error, sel_registerName("localizedDescription")))
+		log_event(notify_log, "notification_failed", fmt.tprintf("\"error\":%s", log_string(description)))
 	}
 }
 

@@ -8,8 +8,13 @@ reports runaway CPU and never kills anything.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the
-  minimal `~/Applications/hw_activity_monitor.app` bundle and loads the agent;
-  log at `~/Library/Logs/hw_activity_monitor.log`.
+  minimal `~/Applications/hw_activity_monitor.app` bundle and loads the agent.
+- Event log: append-only JSONL at `~/Library/Logs/hw_activity_monitor.jsonl`,
+  one object per line, written by `log.odin`. This is the agent-facing record;
+  do not turn it into a rewritten snapshot or add high-frequency sampling
+  events. Events: `started`, `alert`, `notification_authorization`,
+  `notification_failed`. Crash output stays in
+  `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`
   (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). Do not replace this
   with parsing `ps pcpu`: that is a lifetime average and hides recent load.

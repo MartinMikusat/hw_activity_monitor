@@ -81,4 +81,4 @@ rm -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist" \
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 echo "[hw_activity_monitor] installed $APP_DIR"
-echo "[hw_activity_monitor] log: $HOME/Library/Logs/hw_activity_monitor.log"
+echo "[hw_activity_monitor] events: $HOME/Library/Logs/hw_activity_monitor.jsonl"

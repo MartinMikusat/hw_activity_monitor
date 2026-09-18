@@ -172,8 +172,8 @@ tracker_evaluate :: proc(
 	return alerts[:]
 }
 
-// alert_description renders the notification body for an alert.
-alert_description :: proc(alert: Alert) -> string {
+// alert_pid_list renders the alert's pids for messages and JSONL events.
+alert_pid_list :: proc(alert: Alert) -> string {
 	pid_list := strings.builder_make(context.temp_allocator)
 	for pid, index in alert.pids {
 		if index > 0 {
@@ -181,6 +181,11 @@ alert_description :: proc(alert: Alert) -> string {
 		}
 		fmt.sbprintf(&pid_list, "%d", pid)
 	}
+	return strings.to_string(pid_list)
+}
+
+// alert_description renders the notification body for an alert.
+alert_description :: proc(alert: Alert) -> string {
 	return fmt.tprintf(
 		"%s — %d process%s at %.0f%% CPU for %.0f min (pids %s)",
 		alert.name,
@@ -188,6 +193,6 @@ alert_description :: proc(alert: Alert) -> string {
 		alert.count == 1 ? "" : "es",
 		alert.cpu_percent,
 		time.duration_minutes(alert.sustained),
-		strings.to_string(pid_list),
+		alert_pid_list(alert),
 	)
 }

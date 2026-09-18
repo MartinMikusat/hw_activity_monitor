@@ -79,13 +79,14 @@ run_loop :: proc(config: Config) {
 	tracker: Tracker
 	defer tracker_destroy(&tracker)
 
-	log_write(log, fmt.tprintf(
-		"started: interval %.0fs, budget %.0f%% sustained %.0fs, cooldown %.0fs, notifications %v",
+	log_event(log, "started", fmt.tprintf(
+		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",
+		os.get_pid(),
 		config.interval_seconds,
 		config.cpu_percent,
 		config.sustained_seconds,
 		config.cooldown_seconds,
-		backend,
+		log_string(fmt.tprintf("%v", backend)),
 	))
 
 	for {
@@ -94,10 +95,16 @@ run_loop :: proc(config: Config) {
 		alerts := tracker_evaluate(&tracker, groups, time.tick_now(), policy)
 		for alert in alerts {
 			body := alert_description(alert)
-			log_write(log, fmt.tprintf("alert: %s", body))
-			if !notify("Runaway process", body) {
-				log_write(log, "notification failed")
-			}
+			notified := notify("Runaway process", body)
+			log_event(log, "alert", fmt.tprintf(
+				"\"name\":%s,\"processes\":%d,\"cpu_percent\":%.1f,\"sustained_seconds\":%.0f,\"pids\":[%s],\"notified\":%v",
+				log_string(alert.name),
+				alert.count,
+				alert.cpu_percent,
+				time.duration_seconds(alert.sustained),
+				alert_pid_list(alert),
+				notified,
+			))
 		}
 		free_all(context.temp_allocator)
 		wait_with_run_loop(config.interval_seconds)

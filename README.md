@@ -32,8 +32,7 @@ Install copies the binary into `~/Applications/hw_activity_monitor.app` (a
 minimal `LSUIElement` bundle, ad-hoc signed) and loads
 `~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
 (`RunAtLoad`, `KeepAlive`, `ProcessType Background`). The first installed run
-asks for notification permission; without it alerts only reach the log. Logs:
-`~/Library/Logs/hw_activity_monitor.log`.
+asks for notification permission; without it alerts only reach the log.
 
 ## Configuration
 
@@ -68,3 +67,27 @@ identifier and cannot post that way, so development runs (the binary in
 `build/`) fall back to `osascript`; macOS usually drops those banners unless
 Script Editor has notification permission. Alerts always land in the log
 regardless of delivery.
+
+## Event log
+
+The daemon appends one JSON object per line to
+`~/Library/Logs/hw_activity_monitor.jsonl`; the file is never rewritten, so
+agents and `jq` can read it like a stream:
+
+```json
+{"time":"2026-09-18T07:48:15Z","event":"alert","name":"yes","processes":1,"cpu_percent":100.0,"sustained_seconds":11,"pids":[98862],"notified":true}
+```
+
+Events: `started` (pid and effective config), `alert` (name, process count,
+group CPU percent, sustained seconds, pids, whether a banner was requested),
+`notification_authorization` (granted, or the error), and `notification_failed`
+(the API error). Events are rare — one per alert episode — so the file is not
+rotated.
+
+```sh
+jq -c 'select(.event=="alert")' ~/Library/Logs/hw_activity_monitor.jsonl
+jq -r 'select(.event=="alert") | [.time,.name,.processes,.cpu_percent] | @tsv' ~/Library/Logs/hw_activity_monitor.jsonl
+```
+
+launchd's stdout/stderr file (`~/Library/Logs/hw_activity_monitor.launchd.log`)
+keeps crash output.
