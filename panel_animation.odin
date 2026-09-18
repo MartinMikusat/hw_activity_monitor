@@ -8,9 +8,9 @@ package activity_monitor
 
 import draw "ui_framework:draw"
 
-PANEL_OPEN_SECONDS :: f32(0.20)
-PANEL_CLOSE_SECONDS :: f32(0.16)
-PANEL_SCALE_START :: f32(0.75)
+PANEL_OPEN_SECONDS :: f32(0.14)
+PANEL_CLOSE_SECONDS :: f32(0.12)
+PANEL_SCALE_START :: f32(0.92)
 PANEL_TRANSLATE_START :: f32(8)
 
 // panel_ease_out_cubic is the single curve for both fade and movement; it
