@@ -1,7 +1,7 @@
-// Append-only log at ~/Library/Logs/hw_cpu_watchdog.log. A log that cannot be
+// Append-only log at ~/Library/Logs/hw_activity_monitor.log. A log that cannot be
 // opened disables logging but never stops the watchdog.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:fmt"
 import "core:os"
@@ -18,7 +18,7 @@ log_open :: proc() -> Log {
 	if home_err != nil {
 		return {}
 	}
-	path, join_err := filepath.join({home, "Library/Logs/hw_cpu_watchdog.log"})
+	path, join_err := filepath.join({home, "Library/Logs/hw_activity_monitor.log"})
 	if join_err != nil {
 		return {}
 	}

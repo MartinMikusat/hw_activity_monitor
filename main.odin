@@ -1,11 +1,11 @@
-// hw_cpu_watchdog — a small launchd daemon that notices runaway processes.
+// hw_activity_monitor — a small launchd daemon that notices runaway processes.
 //
 // It samples per-process CPU through libproc every few seconds, groups the
 // samples by executable name, and posts a Notification Center banner when a
 // group stays above the configured CPU budget for long enough. Notify only: it
 // never kills anything.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:fmt"
 import "core:os"
@@ -22,7 +22,7 @@ main :: proc() {
 		case strings.has_prefix(argument, "--config="):
 			config_path_override = argument[len("--config="):]
 		case:
-			fmt.eprintln("usage: hw_cpu_watchdog [--once] [--config=PATH]")
+			fmt.eprintln("usage: hw_activity_monitor [--once] [--config=PATH]")
 			os.exit(2)
 		}
 	}

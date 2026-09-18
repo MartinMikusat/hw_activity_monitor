@@ -2,7 +2,7 @@
 // use UNUserNotificationCenter, and osascript delivers on Script Editor's
 // behalf; see AGENTS.md for the bundle upgrade path.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:os"
 import "core:time"

@@ -1,6 +1,6 @@
 // Rule engine tests with a synthetic clock: no sampling, no I/O.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:testing"
 import "core:time"

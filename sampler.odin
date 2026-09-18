@@ -7,7 +7,7 @@
 // Silicon one tick is 125/3 ns (24 MHz), so the deltas must be scaled by
 // mach_timebase_info. Measured against `ps` otherwise: a 100% process reads 2.4%.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:path/filepath"
 import "core:strings"

@@ -4,7 +4,7 @@
 // Everything here is pure: the clock arrives as a monotonic timestamp and no
 // I/O happens, so the daemon loop owns scanning, logging, and notification.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:fmt"
 import "core:slice"

@@ -8,4 +8,4 @@ cd "$BUILD"
 
 hw-odin test "$ROOT" -define:ODIN_TEST_THREADS=1
 "$ROOT/build.sh" release >/dev/null
-echo "[hw_cpu_watchdog] tests passed"
+echo "[hw_activity_monitor] tests passed"

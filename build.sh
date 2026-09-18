@@ -21,5 +21,5 @@ case "$MODE" in
 esac
 
 # shellcheck disable=SC2086
-hw-odin build "$ROOT" $FLAGS -out:"$BUILD/hw_cpu_watchdog"
-echo "[hw_cpu_watchdog] built $BUILD/hw_cpu_watchdog ($MODE)"
+hw-odin build "$ROOT" $FLAGS -out:"$BUILD/hw_activity_monitor"
+echo "[hw_activity_monitor] built $BUILD/hw_activity_monitor ($MODE)"

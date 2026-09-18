@@ -1,4 +1,4 @@
-# hw_cpu_watchdog
+# hw_activity_monitor
 
 A small macOS daemon that notices runaway processes and posts a Notification
 Center banner. Notify only: it never kills anything.
@@ -25,17 +25,17 @@ together instead of N separate small numbers.
 ./test.sh                    # rule-engine tests + compile check
 ./install.sh                 # build, install to ~/.local/bin, load LaunchAgent
 ./uninstall.sh               # unload and remove binary (config and logs kept)
-hw_cpu_watchdog --once       # sample twice, print the busiest groups
+hw_activity_monitor --once       # sample twice, print the busiest groups
 ```
 
-Install loads `~/Library/LaunchAgents/com.halwayland.hw_cpu_watchdog.plist`
+Install loads `~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
 (`RunAtLoad`, `KeepAlive`, `ProcessType Background`). Logs:
-`~/Library/Logs/hw_cpu_watchdog.log`.
+`~/Library/Logs/hw_activity_monitor.log`.
 
 ## Configuration
 
 Defaults live in `config.odin`; override fields in
-`~/Library/Application Support/hw_cpu_watchdog/config.json` (absent fields keep
+`~/Library/Application Support/hw_activity_monitor/config.json` (absent fields keep
 their default):
 
 ```json
@@ -54,7 +54,7 @@ their default):
   gates repeat banners while the group stays hot.
 - `safelist` entries are case-sensitive substrings of the executable name.
   Defaults cover compilers and system processes because builds legitimately peg
-  every core. `hw_cpu_watchdog` itself is always safelisted.
+  every core. `hw_activity_monitor` itself is always safelisted.
 
 ## Notification attribution
 

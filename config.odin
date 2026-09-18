@@ -1,8 +1,8 @@
 // Configuration: defaults in code, optional override file under
-// ~/Library/Application Support/hw_cpu_watchdog/config.json. Fields present in
+// ~/Library/Application Support/hw_activity_monitor/config.json. Fields present in
 // the file replace the defaults; absent fields keep them.
 
-package cpu_watchdog
+package activity_monitor
 
 import "core:encoding/json"
 import "core:fmt"
@@ -21,7 +21,7 @@ Config :: struct {
 // 80%: 60% of one core sustained for five minutes, re-alerting every half hour.
 // Compilers are safelisted because building legitimately pegs every core.
 DEFAULT_SAFELIST := [?]string{
-	"hw_cpu_watchdog",
+	"hw_activity_monitor",
 	"osascript",
 	"kernel_task",
 	"WindowServer",
@@ -54,7 +54,7 @@ config_path :: proc() -> string {
 	if home_err != nil {
 		return ""
 	}
-	path, join_err := filepath.join({home, "Library/Application Support/hw_cpu_watchdog/config.json"})
+	path, join_err := filepath.join({home, "Library/Application Support/hw_activity_monitor/config.json"})
 	if join_err != nil {
 		return ""
 	}
@@ -74,7 +74,7 @@ config_load :: proc(config: ^Config, path: string) {
 		return
 	}
 	if unmarshal_err := json.unmarshal(data, config); unmarshal_err != nil {
-		fmt.eprintf("hw_cpu_watchdog: %s is not valid JSON: %v; using defaults\n", path, unmarshal_err)
+		fmt.eprintf("hw_activity_monitor: %s is not valid JSON: %v; using defaults\n", path, unmarshal_err)
 	}
 }
 

@@ -2,13 +2,13 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-LABEL=com.halwayland.hw_cpu_watchdog
+LABEL=com.halwayland.hw_activity_monitor
 BIN_DIR="$HOME/.local/bin"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 "$ROOT/build.sh" release
 mkdir -p "$BIN_DIR" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-cp -f "$ROOT/build/hw_cpu_watchdog" "$BIN_DIR/hw_cpu_watchdog"
+cp -f "$ROOT/build/hw_activity_monitor" "$BIN_DIR/hw_activity_monitor"
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -19,7 +19,7 @@ cat > "$PLIST" <<EOF
 	<string>$LABEL</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>$BIN_DIR/hw_cpu_watchdog</string>
+		<string>$BIN_DIR/hw_activity_monitor</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -28,14 +28,14 @@ cat > "$PLIST" <<EOF
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>$HOME/Library/Logs/hw_cpu_watchdog.launchd.log</string>
+	<string>$HOME/Library/Logs/hw_activity_monitor.launchd.log</string>
 	<key>StandardErrorPath</key>
-	<string>$HOME/Library/Logs/hw_cpu_watchdog.launchd.log</string>
+	<string>$HOME/Library/Logs/hw_activity_monitor.launchd.log</string>
 </dict>
 </plist>
 EOF
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "[hw_cpu_watchdog] installed $BIN_DIR/hw_cpu_watchdog"
-echo "[hw_cpu_watchdog] log: $HOME/Library/Logs/hw_cpu_watchdog.log"
+echo "[hw_activity_monitor] installed $BIN_DIR/hw_activity_monitor"
+echo "[hw_activity_monitor] log: $HOME/Library/Logs/hw_activity_monitor.log"
