@@ -19,6 +19,8 @@ reports runaway CPU and never kills anything.
   scrolling, and the animation all run through the draw list. Push opacity and
   transform around `render_commands` (draw.push_opacity/push_transform). The
   display link stays paused unless animating or a scroll is settling.
+- This panel is the reference implementation for the global Odin rule "own the
+  stack: native frameworks are a last resort" (`.agents/skills/odin/SKILL.md`).
 - `core:thread.create` returns a *suspended* thread: always follow it with
   `thread.start`; a second argument to `create` is the priority, not user data.
 - Panel rows come from `ui_build_rows` (ui.odin), which is pure apart from its
