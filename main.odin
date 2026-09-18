@@ -8,9 +8,11 @@
 
 package activity_monitor
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:thread"
 import "core:time"
 
 Monitor_State :: struct {
@@ -94,14 +96,26 @@ run_app :: proc(config: Config) {
 		log_string(fmt.tprintf("%v", backend)),
 	))
 
-	if !ui_start(config, monitor_tick) {
+	if !ui_start() {
 		// No window server or AppKit: keep alerting without the status item.
 		log_event(monitor.log, "ui_unavailable", "\"fallback\":\"headless\"")
 		run_headless()
 		return
 	}
-	monitor_tick() // first paint before the run loop takes over
+	if worker := thread.create(monitor_worker); worker != nil {
+		thread.start(worker)
+	}
 	ui_run()
+}
+
+// monitor_worker samples and evaluates alerts off the main thread; the UI only
+// receives finished snapshots, so its animations never wait on a scan.
+monitor_worker :: proc(_: ^thread.Thread) {
+	context = runtime.default_context()
+	for {
+		monitor_tick()
+		time.sleep(time.Duration(monitor.config.interval_seconds * f64(time.Second)))
+	}
 }
 
 // run_headless keeps alerting without a status item; used only when the UI
@@ -114,7 +128,7 @@ run_headless :: proc() {
 }
 
 // monitor_tick is one sampling pass: scan, evaluate alerts, log and notify,
-// then refresh the menu bar. Called by the UI timer on the main thread, or by
+// then hand a snapshot to the menu bar UI. Called by the worker thread, or by
 // the headless loop.
 monitor_tick :: proc() {
 	samples := sampler_scan(&monitor.sampler)
@@ -133,6 +147,6 @@ monitor_tick :: proc() {
 			notified,
 		))
 	}
-	ui_update(ui_total_percent(samples, ui_active_cpu_count()), groups, samples, len(samples))
+	ui_post_snapshot(ui_total_percent(samples, ui_active_cpu_count()), groups, samples, len(samples))
 	free_all(context.temp_allocator)
 }

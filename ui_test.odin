@@ -11,6 +11,7 @@ test_ui_rows_group_then_processes :: proc(t: ^testing.T) {
 		{pid = 11, name = "hw_clay", cpu_fraction = 0.9},
 		{pid = 10, name = "hw_clay", cpu_fraction = 0.8},
 		{pid = 12, name = "hw_clay", cpu_fraction = 0.7},
+		{pid = 13, name = "hw_clay", cpu_fraction = 0.004},
 		{pid = 20, name = "Brave Browser", cpu_fraction = 0.3},
 		{pid = 30, name = "mds", cpu_fraction = 0.001},
 	}
@@ -20,14 +21,14 @@ test_ui_rows_group_then_processes :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[0].kind, Ui_Row_Kind.Header)
 	testing.expect_value(t, rows[0].name, "27% of all cores · 498 processes")
 	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
-	testing.expect_value(t, rows[1].name, "hw_clay ×3")
+	testing.expect_value(t, rows[1].name, "hw_clay ×4")
 	testing.expect_value(t, rows[1].value, "240%")
 	testing.expect_value(t, rows[2].kind, Ui_Row_Kind.Process)
 	testing.expect_value(t, rows[2].name, "    hw_clay · 11")
 	testing.expect_value(t, rows[2].value, "90%")
 	testing.expect_value(t, rows[3].value, "80%")
 	testing.expect_value(t, rows[4].value, "70%")
-	testing.expect_value(t, rows[5].name, "Brave Browser ×1")
+	testing.expect_value(t, rows[5].name, "Brave Browser ×1") // no note: the 0.4% member is not "hidden"
 	testing.expect_value(t, rows[6].value, "30%")
 }
 
@@ -64,4 +65,30 @@ test_ui_total_percent :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, abs(ui_total_percent(samples, 10) - 17.5) < 0.001)
 	testing.expect_value(t, ui_total_percent(samples, 0), f64(0))
+}
+
+@(test)
+test_snapshot_round_trip_frees_cleanly :: proc(t: ^testing.T) {
+	samples := []Process_Cpu{
+		{pid = 10, name = "hw_clay", cpu_fraction = 0.8},
+		{pid = 20, name = "Brave Browser", cpu_fraction = 0.3},
+	}
+	groups := group_cpu(samples)
+	rows := ui_build_rows(groups, samples, 42, len(samples), context.allocator)
+	snapshot := new(Ui_Snapshot, context.allocator)
+	snapshot^ = {
+		allocator     = context.allocator,
+		total_percent = 42,
+		process_count = len(samples),
+		rows          = rows,
+	}
+	ui_snapshot_destroy(snapshot)
+}
+
+@(test)
+test_snapshot_round_trip_quiet_state :: proc(t: ^testing.T) {
+	rows := ui_build_rows(nil, nil, 0, 12, context.allocator)
+	snapshot := new(Ui_Snapshot, context.allocator)
+	snapshot^ = {allocator = context.allocator, rows = rows}
+	ui_snapshot_destroy(snapshot)
 }

@@ -1,35 +1,48 @@
 // Menu bar UI: a status item shows total CPU percent; clicking it opens a
 // transient popover with the top process groups and their processes.
 //
-// Everything here runs on the main thread. NSApplication owns the run loop and
-// an NSTimer calls one monitor tick per interval, which samples, evaluates
-// alerts, refreshes the title, and reloads the table. The table's data source
-// and delegate are a single dynamically registered Objective-C class whose
-// methods read the rows built by ui_build_rows into a per-tick arena.
+// The main thread only draws. NSApplication owns the run loop, and snapshots
+// arrive from the sampler thread as dispatch_async_f work items that are
+// applied here (title, row list, popover size). Nothing on the main thread
+// ever samples the process table, so opening the popover animates smoothly.
+// The table's data source and delegate are one dynamically registered
+// Objective-C class whose methods read the rows of the current snapshot.
 
 package activity_monitor
 
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
-import "core:mem"
 import "core:slice"
-import "core:strings"
 
-UI_WIDTH :: 340
-UI_HEIGHT :: 420
+UI_WIDTH :: 440
+UI_MIN_HEIGHT :: 160
+UI_MAX_HEIGHT :: 560
+UI_ROW_HEIGHT :: 20
 UI_GROUP_LIMIT :: 10
 UI_GROUP_MIN_PERCENT :: 0.5
 UI_PROCESS_LIMIT_PER_GROUP :: 4
 UI_PROCESS_MIN_PERCENT :: 1.0
-UI_ARENA_SIZE :: 128 * 1024
+UI_VALUE_COLUMN_WIDTH :: 92
 
-NSTABLE_ROW_HEIGHT :: 20
 NSRIGHT_TEXT_ALIGNMENT :: 2
 NSACCESSORY_ACTIVATION_POLICY :: 1
 NSPOPOVER_TRANSIENT_BEHAVIOR :: 1
 NSMIN_Y_EDGE :: 1
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
+NSSCROLLER_STYLE_OVERLAY :: 1
+
+foreign import dispatch "system:System"
+foreign dispatch {
+	dispatch_async_f :: proc(queue: rawptr, ctx: rawptr, work: proc "c" (rawptr)) ---
+	// The main queue in libdispatch is the global `_dispatch_main_q`, not a
+	// function: `dispatch_get_main_queue()` is a C macro over its address.
+	_dispatch_main_q: Dispatch_Queue_Storage
+}
+
+Dispatch_Queue_Storage :: struct {
+	_opaque: u8,
+}
 
 Ui_Row_Kind :: enum {
 	Header,
@@ -42,6 +55,15 @@ Ui_Row :: struct {
 	kind:  Ui_Row_Kind,
 	name:  string,
 	value: string,
+}
+
+// Ui_Snapshot owns everything the table reads; the sampler thread builds one,
+// hands it to the main thread, and the main thread frees the previous one.
+Ui_Snapshot :: struct {
+	allocator:     runtime.Allocator,
+	total_percent: f64,
+	process_count: int,
+	rows:          []Ui_Row,
 }
 
 // ------------------------------------------------------------------- model
@@ -72,8 +94,10 @@ sort_by_cpu :: proc(samples: []Process_Cpu) {
 }
 
 // ui_build_rows renders the popover contents: a header, then each top group
-// with its busiest processes underneath, then nothing else. Rows live in the
-// caller's allocator; the daemon passes its per-tick arena.
+// with its busiest processes underneath. Members below UI_PROCESS_MIN_PERCENT
+// are not counted as hidden; only rows cut by the per-group limit are noted.
+// Every string in the result is allocated with the caller's allocator:
+// ui_snapshot_destroy frees them all, so literals are not allowed here.
 ui_build_rows :: proc(
 	groups: []Group_Cpu,
 	samples: []Process_Cpu,
@@ -83,9 +107,8 @@ ui_build_rows :: proc(
 ) -> []Ui_Row {
 	rows := make([dynamic]Ui_Row, 0, 32, allocator)
 	append(&rows, Ui_Row{
-		kind  = .Header,
-		name  = fmt.aprintf("%.0f%% of all cores · %d processes", total_percent, process_count, allocator = allocator),
-		value = "",
+		kind = .Header,
+		name = fmt.aprintf("%.0f%% of all cores · %d processes", total_percent, process_count, allocator = allocator),
 	})
 
 	by_pid := make(map[i32]f64, len(samples), context.temp_allocator)
@@ -118,31 +141,31 @@ ui_build_rows :: proc(
 		}
 		sort_by_cpu(members[:])
 
-		shown := 0
+		eligible := 0
 		for member in members {
 			if member.cpu_fraction * 100 < UI_PROCESS_MIN_PERCENT {
-				break
+				break // sorted highest first
 			}
-			if shown >= UI_PROCESS_LIMIT_PER_GROUP {
-				break
-			}
-			shown += 1
+			eligible += 1
+		}
+		shown := min(eligible, UI_PROCESS_LIMIT_PER_GROUP)
+		for member in members[:shown] {
 			append(&rows, Ui_Row{
 				kind  = .Process,
 				name  = fmt.aprintf("    %s · %d", member.name, member.pid, allocator = allocator),
 				value = percent_text(member.cpu_fraction * 100, allocator),
 			})
 		}
-		if remaining := len(members) - shown; remaining > 0 {
+		if hidden := eligible - shown; hidden > 0 {
 			append(&rows, Ui_Row{
 				kind = .Note,
-				name = fmt.aprintf("    … and %d more", remaining, allocator = allocator),
+				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
 			})
 		}
 	}
 
 	if group_count == 0 {
-		append(&rows, Ui_Row{kind = .Note, name = "All quiet"})
+		append(&rows, Ui_Row{kind = .Note, name = fmt.aprintf("All quiet", allocator = allocator)})
 	}
 	return rows[:]
 }
@@ -150,28 +173,27 @@ ui_build_rows :: proc(
 // --------------------------------------------------------------------- app
 
 Ui_State :: struct {
-	app:          Id,
-	status_item:  Id,
-	button:       Id,
-	popover:      Id,
-	table:        Id,
-	ticker:       Id,
-	rows:         []Ui_Row,
-	arena:        mem.Arena,
-	arena_buffer: []byte,
+	app:         Id,
+	status_item: Id,
+	button:      Id,
+	popover:     Id,
+	table:       Id,
+	container:   Id,
+	scroll:      Id,
+	snapshot:    ^Ui_Snapshot,
+	width:       f64,
+	height:      f64,
 }
 
 ui_state: Ui_State
-ui_on_tick: proc()
+ui_snapshot_applied: bool
 
-ui_start :: proc(config: Config, on_tick: proc()) -> bool {
-	assert(on_tick != nil, "tick callback required")
+ui_start :: proc() -> bool {
 	if !darwin_objc_init() {
 		return false
 	}
-	ui_on_tick = on_tick
-	ui_state.arena_buffer = make([]byte, UI_ARENA_SIZE)
-	mem.arena_init(&ui_state.arena, ui_state.arena_buffer)
+	ui_state.width = UI_WIDTH
+	ui_state.height = UI_MIN_HEIGHT
 
 	app := msg_id0(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
 	if app == nil {
@@ -180,28 +202,10 @@ ui_start :: proc(config: Config, on_tick: proc()) -> bool {
 	ui_state.app = app
 	msg_void_i(app, sel_registerName("setActivationPolicy:"), NSACCESSORY_ACTIVATION_POLICY)
 
-	ticker_class := objc_allocateClassPair(objc_getClass("NSObject"), "ActivityMonitorTicker", 0)
-	if ticker_class == nil {
-		return false
-	}
-	if !class_addMethod(ticker_class, sel_registerName("tick:"), rawptr(ui_timer_fired), "v@:@") ||
-	   !class_addMethod(ticker_class, sel_registerName("togglePopover:"), rawptr(ui_toggle_popover), "v@:@") ||
-	   !class_addMethod(ticker_class, sel_registerName("numberOfRowsInTableView:"), rawptr(ui_table_row_count), "q@:@") ||
-	   !class_addMethod(ticker_class, sel_registerName("tableView:viewForTableColumn:row:"), rawptr(ui_table_cell_view), "@@:@@q") {
-		return false
-	}
-	if protocol := objc_getProtocol("NSTableViewDataSource"); protocol != nil {
-		_ = class_addProtocol(ticker_class, protocol)
-	}
-	if protocol := objc_getProtocol("NSTableViewDelegate"); protocol != nil {
-		_ = class_addProtocol(ticker_class, protocol)
-	}
-	objc_registerClassPair(ticker_class)
-	ticker := msg_id0(ticker_class, sel_registerName("new"))
+	ticker := ui_register_ticker()
 	if ticker == nil {
 		return false
 	}
-	ui_state.ticker = ticker
 
 	status_bar := msg_id0(objc_getClass("NSStatusBar"), sel_registerName("systemStatusBar"))
 	status_item := msg_id_f64(status_bar, sel_registerName("statusItemWithLength:"), NSVARIABLE_STATUS_ITEM_LENGTH)
@@ -218,24 +222,31 @@ ui_start :: proc(config: Config, on_tick: proc()) -> bool {
 	msg_void_id(button, sel_registerName("setTarget:"), ticker)
 	msg_void_sel(button, sel_registerName("setAction:"), sel_registerName("togglePopover:"))
 
-	if !ui_build_popover(ticker) {
-		return false
-	}
+	return ui_build_popover(ticker)
+}
 
-	msg_timer(
-		objc_getClass("NSTimer"),
-		sel_registerName("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
-		config.interval_seconds,
-		ticker,
-		sel_registerName("tick:"),
-		nil,
-		true,
-	)
-	return true
+ui_register_ticker :: proc() -> Id {
+	ticker_class := objc_allocateClassPair(objc_getClass("NSObject"), "ActivityMonitorTicker", 0)
+	if ticker_class == nil {
+		return nil
+	}
+	if !class_addMethod(ticker_class, sel_registerName("togglePopover:"), rawptr(ui_toggle_popover), "v@:@") ||
+	   !class_addMethod(ticker_class, sel_registerName("numberOfRowsInTableView:"), rawptr(ui_table_row_count), "q@:@") ||
+	   !class_addMethod(ticker_class, sel_registerName("tableView:viewForTableColumn:row:"), rawptr(ui_table_cell_view), "@@:@@q") {
+		return nil
+	}
+	if protocol := objc_getProtocol("NSTableViewDataSource"); protocol != nil {
+		_ = class_addProtocol(ticker_class, protocol)
+	}
+	if protocol := objc_getProtocol("NSTableViewDelegate"); protocol != nil {
+		_ = class_addProtocol(ticker_class, protocol)
+	}
+	objc_registerClassPair(ticker_class)
+	return msg_id0(ticker_class, sel_registerName("new"))
 }
 
 ui_build_popover :: proc(ticker: Id) -> bool {
-	frame := Rect{{0, 0}, {UI_WIDTH, UI_HEIGHT}}
+	frame := Rect{{0, 0}, {UI_WIDTH, UI_MIN_HEIGHT}}
 
 	table := msg_id_rect(
 		msg_id0(objc_getClass("NSTableView"), sel_registerName("alloc")),
@@ -247,14 +258,14 @@ ui_build_popover :: proc(ticker: Id) -> bool {
 	}
 	ui_state.table = table
 	msg_void_id(table, sel_registerName("setHeaderView:"), nil)
-	msg_void_f64(table, sel_registerName("setRowHeight:"), NSTABLE_ROW_HEIGHT)
+	msg_void_f64(table, sel_registerName("setRowHeight:"), UI_ROW_HEIGHT)
 	msg_void_bool(table, sel_registerName("setAllowsEmptySelection:"), true)
 	msg_void_i(table, sel_registerName("setSelectionHighlightStyle:"), -1)
 	msg_void_id(table, sel_registerName("setBackgroundColor:"), msg_id0(objc_getClass("NSColor"), sel_registerName("clearColor")))
 	msg_void_id(table, sel_registerName("setDataSource:"), ticker)
 	msg_void_id(table, sel_registerName("setDelegate:"), ticker)
-	msg_void_id(table, sel_registerName("addTableColumn:"), ui_make_column("name", f64(UI_WIDTH) - 96))
-	msg_void_id(table, sel_registerName("addTableColumn:"), ui_make_column("value", 76))
+	msg_void_id(table, sel_registerName("addTableColumn:"), ui_make_column("name", UI_WIDTH - UI_VALUE_COLUMN_WIDTH - 24))
+	msg_void_id(table, sel_registerName("addTableColumn:"), ui_make_column("value", UI_VALUE_COLUMN_WIDTH))
 
 	scroll := msg_id_rect(
 		msg_id0(objc_getClass("NSScrollView"), sel_registerName("alloc")),
@@ -264,8 +275,10 @@ ui_build_popover :: proc(ticker: Id) -> bool {
 	if scroll == nil {
 		return false
 	}
+	ui_state.scroll = scroll
 	msg_void_bool(scroll, sel_registerName("setHasVerticalScroller:"), true)
 	msg_void_bool(scroll, sel_registerName("setAutohidesScrollers:"), true)
+	msg_void_i(scroll, sel_registerName("setScrollerStyle:"), NSSCROLLER_STYLE_OVERLAY)
 	msg_void_bool(scroll, sel_registerName("setDrawsBackground:"), false)
 	msg_void_id(scroll, sel_registerName("setDocumentView:"), table)
 
@@ -277,6 +290,7 @@ ui_build_popover :: proc(ticker: Id) -> bool {
 	if container == nil {
 		return false
 	}
+	ui_state.container = container
 	msg_void_id(container, sel_registerName("addSubview:"), scroll)
 
 	controller := msg_id0(objc_getClass("NSViewController"), sel_registerName("new"))
@@ -291,7 +305,7 @@ ui_build_popover :: proc(ticker: Id) -> bool {
 	}
 	msg_void_id(popover, sel_registerName("setContentViewController:"), controller)
 	msg_void_i(popover, sel_registerName("setBehavior:"), NSPOPOVER_TRANSIENT_BEHAVIOR)
-	msg_void_size(popover, sel_registerName("setContentSize:"), Size{UI_WIDTH, UI_HEIGHT})
+	msg_void_size(popover, sel_registerName("setContentSize:"), Size{UI_WIDTH, UI_MIN_HEIGHT})
 	ui_state.popover = popover
 	return true
 }
@@ -306,6 +320,27 @@ ui_make_column :: proc(identifier: string, width: f64) -> Id {
 		msg_void_f64(column, sel_registerName("setWidth:"), width)
 	}
 	return column
+}
+
+// ui_resize sizes the popover to its content up to UI_MAX_HEIGHT. The popover
+// keeps its current size while it is open so the list does not jump under the
+// pointer.
+ui_resize :: proc(height: f64) {
+	if ui_state.popover == nil || ui_state.container == nil || ui_state.scroll == nil || ui_state.table == nil {
+		return
+	}
+	if msg_bool_0(ui_state.popover, sel_registerName("isShown")) {
+		return
+	}
+	if abs(height - ui_state.height) < 1 {
+		return
+	}
+	ui_state.height = height
+	frame := Rect{{0, 0}, {ui_state.width, height}}
+	msg_void_size(ui_state.popover, sel_registerName("setContentSize:"), Size{ui_state.width, height})
+	msg_void_rect(ui_state.container, sel_registerName("setFrame:"), frame)
+	msg_void_rect(ui_state.scroll, sel_registerName("setFrame:"), frame)
+	msg_void_rect(ui_state.table, sel_registerName("setFrame:"), frame)
 }
 
 // ui_run hands control to AppKit; it only returns when the app terminates.
@@ -324,34 +359,67 @@ ui_active_cpu_count :: proc() -> int {
 	return count == 0 ? 1 : int(count)
 }
 
-// ui_update refreshes the title and the popover table; main thread only.
-ui_update :: proc(total_percent: f64, groups: []Group_Cpu, samples: []Process_Cpu, process_count: int) {
-	if ui_state.button == nil {
-		return
+// ui_post_snapshot builds one snapshot for the main thread. Sampler thread
+// only: rows and strings belong to the snapshot until the main thread frees it.
+ui_post_snapshot :: proc(total_percent: f64, groups: []Group_Cpu, samples: []Process_Cpu, process_count: int) {
+	if ui_state.app == nil {
+		return // headless fallback: nothing to draw
 	}
-	msg_void_id(ui_state.button, sel_registerName("setTitle:"), nsstring(fmt.tprintf("%.0f%%", total_percent)))
-	if ui_state.table == nil {
-		return
+	rows := ui_build_rows(groups, samples, total_percent, process_count, context.allocator)
+	snapshot := new(Ui_Snapshot, context.allocator)
+	snapshot^ = {
+		allocator     = context.allocator,
+		total_percent = total_percent,
+		process_count = process_count,
+		rows          = rows,
 	}
-	mem.arena_free_all(&ui_state.arena)
-	ui_state.rows = ui_build_rows(
-		groups,
-		samples,
-		total_percent,
-		process_count,
-		mem.arena_allocator(&ui_state.arena),
-	)
-	msg_void0(ui_state.table, sel_registerName("reloadData"))
+	dispatch_async_f(&_dispatch_main_q, snapshot, ui_apply_snapshot_c)
+}
+
+ui_apply_snapshot_c :: proc "c" (raw_snapshot: rawptr) {
+	context = runtime.default_context()
+	ui_apply_snapshot((^Ui_Snapshot)(raw_snapshot))
+}
+
+// ui_apply_snapshot runs on the main thread: title, popover size, and table
+// contents, then frees the snapshot it replaced.
+ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
+	if ui_state.button != nil {
+		msg_void_id(
+			ui_state.button,
+			sel_registerName("setTitle:"),
+			nsstring(fmt.tprintf("%.0f%%", snapshot.total_percent)),
+		)
+	}
+	previous := ui_state.snapshot
+	ui_state.snapshot = snapshot
+	if !ui_snapshot_applied {
+		ui_snapshot_applied = true
+		log_event(monitor.log, "ui_ready", fmt.tprintf("\"rows\":%d", len(snapshot.rows)))
+	}
+	ui_resize(clamp(f64(24 + len(snapshot.rows) * UI_ROW_HEIGHT), UI_MIN_HEIGHT, UI_MAX_HEIGHT))
+	if ui_state.table != nil {
+		msg_void0(ui_state.table, sel_registerName("reloadData"))
+	}
+	if previous != nil {
+		ui_snapshot_destroy(previous)
+	}
+}
+
+ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
+	for row in snapshot.rows {
+		if row.name != "" {
+			delete(row.name, snapshot.allocator)
+		}
+		if row.value != "" {
+			delete(row.value, snapshot.allocator)
+		}
+	}
+	delete(snapshot.rows, snapshot.allocator)
+	free(snapshot, snapshot.allocator)
 }
 
 // --------------------------------------------------------------- callbacks
-
-ui_timer_fired :: proc "c" (self: Id, cmd: Sel, timer: Id) {
-	context = runtime.default_context()
-	if ui_on_tick != nil {
-		ui_on_tick()
-	}
-}
 
 ui_toggle_popover :: proc "c" (self: Id, cmd: Sel, sender: Id) {
 	context = runtime.default_context()
@@ -361,9 +429,6 @@ ui_toggle_popover :: proc "c" (self: Id, cmd: Sel, sender: Id) {
 	if msg_bool_0(ui_state.popover, sel_registerName("isShown")) {
 		msg_void0(ui_state.popover, sel_registerName("close"))
 		return
-	}
-	if ui_on_tick != nil {
-		ui_on_tick() // fresh numbers on open
 	}
 	bounds := msg_rect_0(ui_state.button, sel_registerName("bounds"))
 	msg_void_rect_id_i(
@@ -377,15 +442,18 @@ ui_toggle_popover :: proc "c" (self: Id, cmd: Sel, sender: Id) {
 
 ui_table_row_count :: proc "c" (self: Id, cmd: Sel, table: Id) -> i64 {
 	context = runtime.default_context()
-	return i64(len(ui_state.rows))
+	if ui_state.snapshot == nil {
+		return 0
+	}
+	return i64(len(ui_state.snapshot.rows))
 }
 
 ui_table_cell_view :: proc "c" (self: Id, cmd: Sel, table: Id, column: Id, row: i64) -> Id {
 	context = runtime.default_context()
-	if row < 0 || int(row) >= len(ui_state.rows) {
+	if ui_state.snapshot == nil || row < 0 || int(row) >= len(ui_state.snapshot.rows) {
 		return nil
 	}
-	entry := ui_state.rows[row]
+	entry := ui_state.snapshot.rows[row]
 	is_value_column := nsstring_to_string(msg_id0(column, sel_registerName("identifier"))) == "value"
 
 	text := entry.name

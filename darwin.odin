@@ -98,6 +98,11 @@ msg_id_rect :: proc(receiver: Id, selector: Sel, value: Rect) -> Id {
 	return send(receiver, selector, value)
 }
 
+msg_void_rect :: proc(receiver: Id, selector: Sel, value: Rect) {
+	send := transmute(proc "c" (Id, Sel, Rect))objc_send_address
+	send(receiver, selector, value)
+}
+
 msg_bool_0 :: proc(receiver: Id, selector: Sel) -> bool {
 	send := transmute(proc "c" (Id, Sel) -> bool)objc_send_address
 	return send(receiver, selector)
@@ -116,14 +121,6 @@ msg_rect_0 :: proc(receiver: Id, selector: Sel) -> Rect {
 msg_void_rect_id_i :: proc(receiver: Id, selector: Sel, rect: Rect, view: Id, edge: int) {
 	send := transmute(proc "c" (Id, Sel, Rect, Id, int))objc_send_address
 	send(receiver, selector, rect, view, edge)
-}
-
-msg_timer :: proc(
-	class_obj: Id, selector: Sel,
-	interval: f64, target: Id, selector_arg: Sel, user_info: Id, repeats: bool,
-) -> Id {
-	send := transmute(proc "c" (Id, Sel, f64, Id, Sel, Id, bool) -> Id)objc_send_address
-	return send(class_obj, selector, interval, target, selector_arg, user_info, repeats)
 }
 
 nsstring :: proc(value: string) -> Id {

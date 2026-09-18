@@ -40,11 +40,12 @@ asks for notification permission; without it alerts only reach the log.
 The status item shows the sampled total CPU as a share of all cores ("12%").
 Clicking it opens a transient popover: total CPU and process count, then the
 top groups by CPU (highest first) with their busiest processes underneath,
-pids included. The list refreshes on every sampling tick, which
-`interval_seconds` controls, and once more when the popover opens.
+pids included. The popover sizes itself to the list, up to a maximum height,
+then scrolls.
 
-The same tick evaluates alert rules, so a shorter interval also tightens the
-alert resolution; the default is 5 seconds.
+Sampling runs on a worker thread and reaches the UI as finished snapshots, so
+opening the popover never waits on a scan of the process table. The list
+refreshes on every sampling tick, which `interval_seconds` controls.
 
 ## Configuration
 
@@ -90,8 +91,9 @@ agents and `jq` can read it like a stream:
 {"time":"2026-09-18T07:48:15Z","event":"alert","name":"yes","processes":1,"cpu_percent":100.0,"sustained_seconds":11,"pids":[98862],"notified":true}
 ```
 
-Events: `started` (pid and effective config), `alert` (name, process count,
-group CPU percent, sustained seconds, pids, whether a banner was requested),
+Events: `started` (pid and effective config), `ui_ready` (first snapshot
+applied to the menu bar), `alert` (name, process count, group CPU percent,
+sustained seconds, pids, whether a banner was requested),
 `notification_authorization` (granted, or the error), and `notification_failed`
 (the API error). Events are rare — one per alert episode — so the file is not
 rotated.
