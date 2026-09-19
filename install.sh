@@ -78,7 +78,18 @@ rm -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist" \
       "$HOME/.local/bin/hw_cpu_watchdog" \
       "$HOME/Library/Logs/hw_cpu_watchdog.log" \
       "$HOME/Library/Logs/hw_cpu_watchdog.launchd.log"
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+
+# bootout returns before launchd has finished removing the old instance, so an
+# immediate bootstrap can fail with a transient I/O error. Retry briefly.
+attempt=1
+until launchctl bootstrap "gui/$(id -u)" "$PLIST"; do
+	if [ "$attempt" -ge 3 ]; then
+		echo "[hw_activity_monitor] launchctl bootstrap failed" >&2
+		exit 1
+	fi
+	attempt=$((attempt + 1))
+	sleep 1
+done
 
 echo "[hw_activity_monitor] installed $APP_DIR"
 echo "[hw_activity_monitor] events: $HOME/Library/Logs/hw_activity_monitor.jsonl"
