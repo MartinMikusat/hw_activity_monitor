@@ -1,7 +1,9 @@
-// Per-process CPU sampling through libproc. proc_pid_rusage reports cumulative
-// CPU time per process; the delta between two scans divided by the wall time
-// between them gives the CPU actually used since the last scan, instead of the
-// lifetime average that `ps pcpu` reports.
+// Per-process CPU and memory sampling through libproc. proc_pid_rusage reports
+// cumulative CPU time per process; the delta between two scans divided by the
+// wall time between them gives the CPU actually used since the last scan,
+// instead of the lifetime average that `ps pcpu` reports. The same call reports
+// physical footprint, a level, so memory needs no delta and is correct from the
+// first scan.
 //
 // The rusage times are in mach timebase ticks, not nanoseconds: on Apple
 // Silicon one tick is 125/3 ns (24 MHz), so the deltas must be scaled by
@@ -39,7 +41,7 @@ sampler_destroy :: proc(sampler: ^Sampler) {
 // sampler_scan returns one sample per process whose rusage could be read, with
 // cpu_fraction relative to the wall time since the previous scan. The first
 // scan after startup reports zero fractions: a delta needs two points.
-sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []Process_Cpu {
+sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []Process_Sample {
 	assert(sampler != nil, "sampler required")
 	if sampler.ticks_to_seconds == 0 {
 		timebase: Mach_Timebase
@@ -70,7 +72,7 @@ sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []
 
 	previous := sampler.previous_total
 	fresh := make(map[posix.pid_t]u64, len(pids), context.allocator)
-	samples := make([dynamic]Process_Cpu, 0, len(pids), scratch)
+	samples := make([dynamic]Process_Sample, 0, len(pids), scratch)
 	path_buffer: [posix.PATH_MAX]byte
 
 	for pid_value in pids {
@@ -95,10 +97,11 @@ sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []
 
 		fresh[pid] = total
 		name := filepath.base(string(path_buffer[:path_length]))
-		append(&samples, Process_Cpu{
+		append(&samples, Process_Sample{
 			pid          = i32(pid),
 			name         = strings.clone(name, scratch),
 			cpu_fraction = fraction,
+			memory_bytes = usage.ri_phys_footprint,
 		})
 	}
 

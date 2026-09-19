@@ -1,7 +1,7 @@
 # hw_activity_monitor
 
 Standalone macOS watchdog daemon (package `activity_monitor`), notify-only: it
-reports runaway CPU and never kills anything.
+reports runaway CPU and memory and never kills anything.
 
 - Build with `./build.sh [debug|release]`. Test with `./test.sh`. Install and
   remove with `./install.sh` / `./uninstall.sh`.
@@ -34,12 +34,15 @@ reports runaway CPU and never kills anything.
 - Event log: append-only JSONL at `~/Library/Logs/hw_activity_monitor.jsonl`,
   one object per line, written by `log.odin`. This is the agent-facing record;
   do not turn it into a rewritten snapshot or add high-frequency sampling
-  events. Events: `started`, `alert`, `notification_authorization`,
-  `notification_failed`. Crash output stays in
+  events. Events: `started`, `alert` (kind `cpu` or `memory`, name, processes,
+  cpu_percent, memory_bytes, sustained_seconds, pids, notified),
+  `notification_authorization`, `notification_failed`. Crash output stays in
   `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`
-  (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). Do not replace this
-  with parsing `ps pcpu`: that is a lifetime average and hides recent load.
+  (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). `proc_pid_rusage`
+  supplies both the cumulative CPU times and `ri_phys_footprint`, the memory
+  number Activity Monitor shows. Do not replace this with parsing `ps pcpu`:
+  that is a lifetime average and hides recent load.
 - `rules.odin` must stay free of I/O and clocks past the monotonic timestamp
   passed in.
 - Notifications post through `UNUserNotificationCenter` (the Objective-C
@@ -52,4 +55,6 @@ reports runaway CPU and never kills anything.
   "Notifications are not allowed for this application". Callbacks need the run
   loop pump in `wait_with_run_loop`.
 - Detection is name-grouped on purpose: three instances of one binary at 80%
-  each must alert as 240%, not three times at 80%.
+  each must alert as 240%, not three times at 80%. CPU and memory keep
+  independent episodes per name: a dimension that drops below its budget resets
+  even while the other stays hot.

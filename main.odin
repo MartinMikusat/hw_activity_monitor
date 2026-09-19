@@ -1,8 +1,8 @@
 // hw_activity_monitor — a menu bar watchdog for runaway processes.
 //
-// On a timer the app samples per-process CPU through libproc, groups the
-// samples by executable name, posts a Notification Center banner when a group
-// stays above its CPU budget, and appends JSONL events. A status item shows
+// On a timer the app samples per-process CPU and memory through libproc, groups
+// the samples by executable name, posts a Notification Center banner when a
+// group stays above either budget, and appends JSONL events. A status item shows
 // total CPU percent; clicking it opens a popover with the top groups and their
 // processes. Notify only: it never kills anything.
 
@@ -64,13 +64,25 @@ run_once :: proc(config: Config) {
 	time.sleep(1 * time.Second)
 
 	samples := sampler_scan(&sampler)
-	groups := group_cpu(samples)
-	fmt.printf("%d processes, %d names (budget %.0f%%):\n", len(samples), len(groups), config.cpu_percent)
+	groups := group_samples(samples)
+	fmt.printf(
+		"%d processes, %d names (CPU budget %.0f%%, memory budget %.0f MB):\n",
+		len(samples),
+		len(groups),
+		config.cpu_percent,
+		config.memory_mb,
+	)
 	for group, index in groups {
 		if index >= 15 {
 			break
 		}
-		fmt.printf("  %s\t%d proc\t%.1f%%\n", group.name, group.count, group.cpu_percent)
+		fmt.printf(
+			"  %s\t%d proc\t%.1f%%\t%s\n",
+			group.name,
+			group.count,
+			group.cpu_percent,
+			format_bytes(group.memory_bytes),
+		)
 	}
 	free_all(context.temp_allocator)
 }
@@ -78,19 +90,21 @@ run_once :: proc(config: Config) {
 run_app :: proc(config: Config) {
 	monitor.config = config
 	monitor.policy = Policy{
-		cpu_percent = config.cpu_percent,
-		sustained   = time.Duration(config.sustained_seconds * f64(time.Second)),
-		cooldown    = time.Duration(config.cooldown_seconds * f64(time.Second)),
-		safelist    = config.safelist,
+		cpu_percent  = config.cpu_percent,
+		memory_bytes = u64(config.memory_mb * f64(1 << 20)),
+		sustained    = time.Duration(config.sustained_seconds * f64(time.Second)),
+		cooldown     = time.Duration(config.cooldown_seconds * f64(time.Second)),
+		safelist     = config.safelist,
 	}
 	monitor.log = log_open()
 	backend := notify_init(monitor.log)
 
 	log_event(monitor.log, "started", fmt.tprintf(
-		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",
+		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"memory_mb\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",
 		os.get_pid(),
 		config.interval_seconds,
 		config.cpu_percent,
+		config.memory_mb,
 		config.sustained_seconds,
 		config.cooldown_seconds,
 		log_string(fmt.tprintf("%v", backend)),
@@ -132,16 +146,18 @@ run_headless :: proc() {
 // the headless loop.
 monitor_tick :: proc() {
 	samples := sampler_scan(&monitor.sampler)
-	groups := group_cpu(samples)
+	groups := group_samples(samples)
 	alerts := tracker_evaluate(&monitor.tracker, groups, time.tick_now(), monitor.policy)
 	for alert in alerts {
 		body := alert_description(alert)
-		notified := notify("Runaway process", body)
+		notified := notify(alert_title(alert), body)
 		log_event(monitor.log, "alert", fmt.tprintf(
-			"\"name\":%s,\"processes\":%d,\"cpu_percent\":%.1f,\"sustained_seconds\":%.0f,\"pids\":[%s],\"notified\":%v",
+			"\"kind\":%s,\"name\":%s,\"processes\":%d,\"cpu_percent\":%.1f,\"memory_bytes\":%d,\"sustained_seconds\":%.0f,\"pids\":[%s],\"notified\":%v",
+			log_string(alert_kind_text(alert.kind)),
 			log_string(alert.name),
 			alert.count,
 			alert.cpu_percent,
+			alert.memory_bytes,
 			time.duration_seconds(alert.sustained),
 			alert_pid_list(alert),
 			notified,

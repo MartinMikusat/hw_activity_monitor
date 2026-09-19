@@ -53,8 +53,19 @@ percent_text :: proc(percent: f64, allocator := context.temp_allocator) -> strin
 	return fmt.aprintf("%.0f%%", percent, allocator = allocator)
 }
 
+// metric_text renders one row's metrics as "240% · 3.4 GB". Intermediates live
+// in temporary storage so only the result is charged to allocator.
+metric_text :: proc(cpu_percent: f64, memory_bytes: u64, allocator := context.temp_allocator) -> string {
+	return fmt.aprintf(
+		"%s · %s",
+		percent_text(cpu_percent, context.temp_allocator),
+		format_bytes(memory_bytes, context.temp_allocator),
+		allocator = allocator,
+	)
+}
+
 // ui_total_percent reports the sampled CPU as a share of all cores.
-ui_total_percent :: proc(samples: []Process_Cpu, cpu_count: int) -> f64 {
+ui_total_percent :: proc(samples: []Process_Sample, cpu_count: int) -> f64 {
 	if cpu_count <= 0 {
 		return 0
 	}
@@ -65,20 +76,22 @@ ui_total_percent :: proc(samples: []Process_Cpu, cpu_count: int) -> f64 {
 	return clamp(total / f64(cpu_count) * 100, 0, 100)
 }
 
-sort_by_cpu :: proc(samples: []Process_Cpu) {
-	slice.sort_by(samples, proc(a, b: Process_Cpu) -> bool {
+sort_by_cpu :: proc(samples: []Process_Sample) {
+	slice.sort_by(samples, proc(a, b: Process_Sample) -> bool {
 		return a.cpu_fraction > b.cpu_fraction
 	})
 }
 
 // ui_build_rows renders the panel contents: a header, then each top group with
-// its busiest processes underneath. Members below UI_PROCESS_MIN_PERCENT are
-// not counted as hidden; only rows cut by the per-group limit are noted. Every
+// its busiest processes underneath. Groups are shown while they are above the
+// CPU floor or the memory floor, so a memory-heavy but idle process is visible;
+// a group row carries "CPU · memory". Members below both process floors are not
+// counted as hidden; only rows cut by the per-group limit are noted. Every
 // string is allocated with the caller's allocator so snapshots can be freed
 // wholesale.
 ui_build_rows :: proc(
-	groups: []Group_Cpu,
-	samples: []Process_Cpu,
+	groups: []Group_Sample,
+	samples: []Process_Sample,
 	total_percent: f64,
 	process_count: int,
 	allocator := context.temp_allocator,
@@ -89,16 +102,18 @@ ui_build_rows :: proc(
 		name = fmt.aprintf("%.0f%% of all cores · %d processes", total_percent, process_count, allocator = allocator),
 	})
 
-	by_pid := make(map[i32]f64, len(samples), context.temp_allocator)
+	by_pid := make(map[i32]Process_Sample, len(samples), context.temp_allocator)
 	defer delete(by_pid)
 	for sample in samples {
-		by_pid[sample.pid] = sample.cpu_fraction
+		by_pid[sample.pid] = sample
 	}
 
 	group_count := 0
 	for group in groups {
-		if group.cpu_percent < UI_GROUP_MIN_PERCENT {
-			break // groups are sorted highest first
+		cpu_active := group.cpu_percent >= UI_GROUP_MIN_PERCENT
+		memory_active := group.memory_bytes >= u64(UI_GROUP_MEMORY_MIN_MB) * (1 << 20)
+		if !cpu_active && !memory_active {
+			continue // groups are sorted by CPU, so a memory-heavy group can be anywhere
 		}
 		if group_count >= UI_GROUP_LIMIT {
 			break
@@ -107,34 +122,37 @@ ui_build_rows :: proc(
 		append(&rows, Ui_Row{
 			kind  = .Group,
 			name  = fmt.aprintf("%s ×%d", group.name, group.count, allocator = allocator),
-			value = percent_text(group.cpu_percent, allocator),
+			value = metric_text(group.cpu_percent, group.memory_bytes, allocator),
 		})
 
-		members := make([dynamic]Process_Cpu, 0, len(group.pids), context.temp_allocator)
+		members := make([dynamic]Process_Sample, 0, len(group.pids), context.temp_allocator)
 		defer delete(members)
 		for pid in group.pids {
-			if fraction, found := by_pid[pid]; found {
-				append(&members, Process_Cpu{pid = pid, name = group.name, cpu_fraction = fraction})
+			if sample, found := by_pid[pid]; found {
+				append(&members, sample)
 			}
 		}
 		sort_by_cpu(members[:])
 
-		eligible := 0
+		eligible := make([dynamic]Process_Sample, 0, len(members), context.temp_allocator)
+		defer delete(eligible)
 		for member in members {
-			if member.cpu_fraction * 100 < UI_PROCESS_MIN_PERCENT {
-				break // sorted highest first
+			cpu_member := member.cpu_fraction * 100 >= UI_PROCESS_MIN_PERCENT
+			memory_member := member.memory_bytes >= u64(UI_PROCESS_MEMORY_MIN_MB) * (1 << 20)
+			if !cpu_member && !memory_member {
+				continue
 			}
-			eligible += 1
+			append(&eligible, member)
 		}
-		shown := min(eligible, UI_PROCESS_LIMIT_PER_GROUP)
-		for member in members[:shown] {
+		shown := min(len(eligible), UI_PROCESS_LIMIT_PER_GROUP)
+		for member in eligible[:shown] {
 			append(&rows, Ui_Row{
 				kind  = .Process,
 				name  = fmt.aprintf("    %s · %d", member.name, member.pid, allocator = allocator),
-				value = percent_text(member.cpu_fraction * 100, allocator),
+				value = metric_text(member.cpu_fraction * 100, member.memory_bytes, allocator),
 			})
 		}
-		if hidden := eligible - shown; hidden > 0 {
+		if hidden := len(eligible) - shown; hidden > 0 {
 			append(&rows, Ui_Row{
 				kind = .Note,
 				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
@@ -216,7 +234,7 @@ ui_status_button_screen_rect :: proc() -> Rect {
 
 // ui_post_snapshot builds one snapshot for the main thread. Sampler thread
 // only: rows and strings belong to the snapshot until the main thread frees it.
-ui_post_snapshot :: proc(total_percent: f64, groups: []Group_Cpu, samples: []Process_Cpu, process_count: int) {
+ui_post_snapshot :: proc(total_percent: f64, groups: []Group_Sample, samples: []Process_Sample, process_count: int) {
 	if ui_state.app == nil {
 		return // headless fallback: nothing to draw
 	}
