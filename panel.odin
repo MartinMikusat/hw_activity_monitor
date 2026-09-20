@@ -87,6 +87,10 @@ Panel :: struct {
 	// happen outside the animation clock.
 	scroll_delta: [2]f32,
 	draw_dirty:   bool,
+	// True while panel_draw runs: state changes made by a click handler must
+	// not start a nested draw, and resizes must happen before the drawable is
+	// acquired.
+	drawing:      bool,
 }
 
 panel: Panel
@@ -244,9 +248,12 @@ panel_set_size :: proc(width, height: f32) {
 	panel_window_set_frame(width, height)
 }
 
-// panel_mark_dirty draws once when the animation clock is idle.
+// panel_mark_dirty draws once when the animation clock is idle. While a draw is
+// in flight, it only flags the frame: the running draw already picks up the
+// change, and a nested draw would present a stale-size frame after the correct
+// one.
 panel_mark_dirty :: proc() {
-	if panel_window_is_animating() {
+	if panel.drawing || panel_window_is_animating() {
 		panel.draw_dirty = true
 		return
 	}
@@ -272,6 +279,18 @@ panel_draw :: proc() {
 	if panel.layer == nil || panel.queue == nil {
 		return
 	}
+	panel.drawing = true
+	defer panel.drawing = false
+
+	// Pointer state and click handling run before the drawable is acquired:
+	// a click can resize the panel (opening or closing settings), and the frame
+	// must be encoded at the size it will be presented with.
+	hw_clay.set_pointer_state(&panel.clay, panel_pointer_position(), panel_window.pointer_down)
+	if panel_window.click_pending {
+		panel_window.click_pending = false
+		panel_handle_click()
+	}
+
 	scale := f32(1)
 	if panel.window != nil {
 		scale = f32(panel.window->backingScaleFactor())
@@ -287,11 +306,6 @@ panel_draw :: proc() {
 	coretext.begin_frame(&panel.text, scale, metal.atlas_io(&panel.gpu))
 	draw.list_reset(&panel.list)
 
-	hw_clay.set_pointer_state(&panel.clay, panel_pointer_position(), panel_window.pointer_down)
-	if panel_window.click_pending {
-		panel_window.click_pending = false
-		panel_handle_click()
-	}
 	panel_apply_scroll(PANEL_FRAME_SECONDS)
 	hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
 	rows := panel_rows()
