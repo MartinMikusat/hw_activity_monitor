@@ -30,6 +30,17 @@ reports runaway CPU and memory and never kills anything.
   absent past the history window, and `ui_sort_now` (the Sort button) adopts
   the rank order. Never sort rows in the worker: the list must not move without
   the operator asking.
+- The maximized dashboard lays out one block per group: the group's rows in a
+  text column, and a chart in a column a third of the panel's content wide that
+  spans the block. A block is `panel_block_rows` tall — its own rows, at least
+  `PANEL_CHART_MIN_ROWS` — so a short group gets blank rows and its chart always
+  has room. `panel_draw_charts` draws the two series into the chart body after
+  the clay commands (CPU in the text color, memory in the secondary color), each
+  scaled to its own peak, over a faint baseline, with a dot on the peak sample;
+  the value and peak labels are clay text floating in the body, so the layout
+  positions them. `panel_test.odin` checks the block and chart geometry against a
+  real headless clay layout, which is how the dashboard is verified without
+  driving the UI.
 - The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
   one place AppKit owns content because the status item is AppKit's). Its Quit
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart

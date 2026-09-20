@@ -36,6 +36,13 @@ PANEL_STAT_MEMORY_WIDTH :: f32(62)
 PANEL_STAT_WINDOW_CPU_WIDTH :: f32(42)
 PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(70)
 PANEL_SPARK_WIDTH :: f32(60)
+// The maximized dashboard gives every group a block at least this many rows
+// tall, with its chart spanning the block. A block with fewer rows is padded
+// with blank rows so the chart always has room; the chart column is a third of
+// the panel's content width and the axis line sits under the series.
+PANEL_CHART_MIN_ROWS :: 4
+PANEL_CHART_AXIS_HEIGHT :: f32(18)
+PANEL_CHART_GAP :: 10
 // The rank column holds the index number on group rows; process rows keep the
 // column empty and put their rank inline, indented, next to the label.
 PANEL_RANK_WIDTH :: f32(22)
@@ -280,9 +287,71 @@ panel_draw_sparklines :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 	}
 }
 
-// panel_draw_charts draws the maximized view's per-group charts (two stacked
-// series with labels and peak markers). Filled in by the maximized layout.
+// panel_draw_charts draws the maximized dashboard's per-group charts: two
+// stacked series, each scaled to its own peak, over a faint baseline, with a dot
+// on the peak sample. The value labels are clay text in the chart column, so
+// they are positioned by the layout and not here.
 panel_draw_charts :: proc(rows: []Ui_Row, palette: Panel_Palette) {
+	for row, index in rows {
+		if row.kind != .Group {
+			continue
+		}
+		data := hw_clay.get_element_data(&panel.clay, hw_clay.id_indexed("panel-chart", u32(index)))
+		if !data.found {
+			continue
+		}
+		box := hw_clay_ui.rect_to_draw(&panel.renderer, data.bounding_box)
+		if box.w <= 1 || box.h <= 2 {
+			continue
+		}
+		half := box.h / 2
+		panel_draw_series(box.x, box.y, box.w, half, row.spark, palette.text, palette)
+		panel_draw_series(box.x, box.y+half, box.w, half, row.spark_memory, palette.secondary, palette)
+	}
+}
+
+// panel_draw_series draws one windowed series across a band, scaled to its own
+// peak: a faint baseline at the band's bottom, the series line, and a dot where
+// the peak sample sits.
+panel_draw_series :: proc(
+	x, y, width, height: f32,
+	series: []f32,
+	color: hw_clay.Color,
+	palette: Panel_Palette,
+) {
+	if len(series) < 2 || width <= 1 || height <= 2 {
+		return
+	}
+	peak: f32
+	for value in series {
+		peak = max(peak, value)
+	}
+	if peak <= 0 {
+		return
+	}
+	draw.solid(&panel.list, {x, y + height - 1, width, 1}, hw_clay_ui.color_to_draw(palette.border))
+
+	scale := (height - 1) / peak
+	draw.path_begin(&panel.list)
+	draw.path_move_to(&panel.list, x, y+height-1-series[0]*scale)
+	for value, index in series {
+		if index == 0 {
+			continue
+		}
+		sample_x := x + width*f32(index)/f32(len(series)-1)
+		draw.path_line_to(&panel.list, sample_x, y+height-1-value*scale)
+	}
+	draw.path_stroke(&panel.list, hw_clay_ui.color_to_draw(color), 1, label = "chart")
+
+	peak_index := 0
+	for value, index in series {
+		if value > series[peak_index] {
+			peak_index = index
+		}
+	}
+	dot_x := x + width*f32(peak_index)/f32(len(series)-1)
+	dot_y := y + height - 1 - series[peak_index]*scale
+	draw.solid(&panel.list, {dot_x - 1, dot_y - 1, 2, 2}, hw_clay_ui.color_to_draw(color))
 }
 
 // panel_content_changed resizes the panel for the current content and fills the
@@ -618,113 +687,145 @@ panel_build_root :: proc(
 		},
 	})
 
-	if mode == .Popover && settings.open {
+	if mode == .Maximized {
+		panel_build_maximized_list(ctx, rows, palette)
+	} else if settings.open {
 		panel_settings_rows(ctx, palette)
 	} else {
-		panel_build_rows_list(ctx, rows, palette, mode)
+		panel_build_rows_list(ctx, rows, palette)
 	}
 
 	hw_clay.pop_element(ctx) // root
 }
 
-// panel_build_rows_list builds the scrollable group/process list.
-panel_build_rows_list :: proc(
-	ctx: ^hw_clay.Context,
-	rows: []Ui_Row,
-	palette: Panel_Palette,
-	mode: Panel_Mode,
-) {
+// panel_build_rows_list builds the popover's scrollable group/process list.
+panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Panel_Palette) {
 	hw_clay.open_element(ctx, hw_clay.id("panel-list"))
 	hw_clay.configure_element(ctx, {
 		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}, layout_direction = .Top_To_Bottom},
 		clip   = {vertical = true, child_offset = hw_clay.get_scroll_offset(ctx)},
 	})
 
-	stats := panel_stats()
 	for row, index in rows {
-		hw_clay.open_element(ctx, hw_clay.id_indexed("panel-row", u32(index)))
-		hw_clay.configure_element(ctx, {
-			layout = {
-				sizing          = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
-				child_alignment = {y = .Center},
-				child_gap       = PANEL_ROW_GAP,
-			},
-			background_color = panel_rank_background(row, palette),
-		})
-
-		font, color := panel_row_style(row, palette)
-		// The header spans the full width and carries the panel buttons; data
-		// rows start with the rank cell, then the growing name. Every row pushes
-		// the same enabled columns, empty where a row has no value, so the table
-		// stays aligned vertically.
 		if row.kind == .Header {
-			panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
-			panel_push_button(ctx, hw_clay.id("panel-sort"), "Sort", palette)
-			if mode == .Maximized {
-				panel_push_button(ctx, hw_clay.id("panel-restore"), "Restore", palette)
-			} else {
-				panel_push_button(ctx, hw_clay.id("panel-maximize"), "Maximize", palette)
-				panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
-			}
-			hw_clay.pop_element(ctx)
+			panel_push_list_header(ctx, row, palette, .Popover)
 			continue
 		}
-		rank_text := ""
-		if row.kind == .Group {
-			rank_text = row.rank > 0 ? fmt.tprintf("%d", row.rank) : ""
-		}
+		panel_push_data_row(ctx, row, index, palette, .Popover)
+	}
+
+	hw_clay.pop_element(ctx) // list
+}
+
+// panel_push_list_header pushes the header row: the title and the panel buttons.
+panel_push_list_header :: proc(
+	ctx: ^hw_clay.Context,
+	row: Ui_Row,
+	palette: Panel_Palette,
+	mode: Panel_Mode,
+) {
+	hw_clay.open_element(ctx, hw_clay.id("panel-header"))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
+			child_alignment = {y = .Center},
+			child_gap       = PANEL_ROW_GAP,
+		},
+	})
+	_, color := panel_row_style(row, palette)
+	panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+	panel_push_button(ctx, hw_clay.id("panel-sort"), "Sort", palette)
+	if mode == .Maximized {
+		panel_push_button(ctx, hw_clay.id("panel-restore"), "Restore", palette)
+	} else {
+		panel_push_button(ctx, hw_clay.id("panel-maximize"), "Maximize", palette)
+		panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
+	}
+	hw_clay.pop_element(ctx)
+}
+
+// panel_push_data_row pushes one group, process, or note row. The spark column
+// belongs to the popover's per-row sparkline; the maximized dashboard drops it
+// and draws one chart per group instead.
+panel_push_data_row :: proc(
+	ctx: ^hw_clay.Context,
+	row: Ui_Row,
+	row_index: int,
+	palette: Panel_Palette,
+	mode: Panel_Mode,
+) {
+	stats := panel_stats()
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-row", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
+			child_alignment = {y = .Center},
+			child_gap       = PANEL_ROW_GAP,
+		},
+		background_color = panel_rank_background(row, palette),
+	})
+
+	_, color := panel_row_style(row, palette)
+	// The header spans the full width and carries the panel buttons; data rows
+	// start with the rank cell, then the growing name. Every row pushes the same
+	// enabled columns, empty where a row has no value, so the table stays aligned
+	// vertically.
+	rank_text := ""
+	if row.kind == .Group {
+		rank_text = row.rank > 0 ? fmt.tprintf("%d", row.rank) : ""
+	}
+	panel_push_text(
+		ctx,
+		rank_text,
+		FONT_BODY,
+		panel_rank_text_color(row, palette),
+		{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
+		.Right,
+	)
+	if row.kind == .Process {
 		panel_push_text(
 			ctx,
-			rank_text,
+			panel_process_rank_text(row.rank),
 			FONT_BODY,
 			panel_rank_text_color(row, palette),
-			{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
+			{hw_clay.fixed(PANEL_PROCESS_RANK_WIDTH), hw_clay.grow()},
 			.Right,
 		)
-		if row.kind == .Process {
-			panel_push_text(
-				ctx,
-				panel_process_rank_text(row.rank),
-				FONT_BODY,
-				panel_rank_text_color(row, palette),
-				{hw_clay.fixed(PANEL_PROCESS_RANK_WIDTH), hw_clay.grow()},
-				.Right,
-			)
-		}
-		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
-		if stats.cpu {
-			panel_push_text(
-				ctx,
-				row.cpu,
-				FONT_BODY,
-				palette.text,
-				{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
-				.Right,
-			)
-		}
-		if stats.memory {
-			panel_push_text(
-				ctx,
-				row.memory,
-				FONT_BODY,
-				palette.text,
-				{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
-				.Right,
-			)
-		}
-		if stats.window_cpu {
-			panel_push_text(
-				ctx,
-				row.window_cpu,
-				FONT_BODY,
-				palette.text,
-				{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
-				.Right,
-			)
+	}
+	panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+	if stats.cpu {
+		panel_push_text(
+			ctx,
+			row.cpu,
+			FONT_BODY,
+			palette.text,
+			{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	if stats.memory {
+		panel_push_text(
+			ctx,
+			row.memory,
+			FONT_BODY,
+			palette.text,
+			{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	if stats.window_cpu {
+		panel_push_text(
+			ctx,
+			row.window_cpu,
+			FONT_BODY,
+			palette.text,
+			{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+		if mode == .Popover {
 			// The sparkline column reserves space for the series drawn after
 			// the clay commands; only group rows carry one.
-			chart_label := mode == .Maximized ? "panel-chart" : "panel-spark"
-			hw_clay.open_element(ctx, hw_clay.id_indexed(chart_label, u32(index)))
+			hw_clay.open_element(ctx, hw_clay.id_indexed("panel-spark", u32(row_index)))
 			hw_clay.configure_element(ctx, {
 				layout = {
 					sizing          = {hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
@@ -733,20 +834,287 @@ panel_build_rows_list :: proc(
 			})
 			hw_clay.pop_element(ctx)
 		}
-		if stats.window_memory {
-			panel_push_text(
-				ctx,
-				row.window_memory,
-				FONT_BODY,
-				palette.text,
-				{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
-				.Right,
-			)
+	}
+	if stats.window_memory {
+		panel_push_text(
+			ctx,
+			row.window_memory,
+			FONT_BODY,
+			palette.text,
+			{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	hw_clay.pop_element(ctx)
+}
+
+// ---------------------------------------------------------------- maximized
+
+// panel_chart_column_width is a third of the panel's content width.
+panel_chart_column_width :: proc(panel_width: f32) -> f32 {
+	return (panel_width - f32(PANEL_PADDING_HORIZONTAL) * 2) / 3
+}
+
+// panel_block_rows is how many rows tall a group's block is: its own rows, at
+// least PANEL_CHART_MIN_ROWS so the chart has room.
+panel_block_rows :: proc(row_count: int) -> int {
+	return max(PANEL_CHART_MIN_ROWS, row_count)
+}
+
+// panel_window_text names a history window on the chart's time axis: the series
+// runs from this far back to now.
+panel_window_text :: proc(seconds: f64) -> string {
+	switch {
+	case seconds >= 3600:
+		return fmt.tprintf("%.0fh", seconds / 3600)
+	case seconds >= 60:
+		return fmt.tprintf("%.0fm", seconds / 60)
+	case:
+		return fmt.tprintf("%.0fs", seconds)
+	}
+}
+
+panel_window_seconds :: proc() -> f64 {
+	if ui_state.snapshot != nil {
+		return ui_state.snapshot.config.window_seconds
+	}
+	return 600
+}
+
+// panel_build_maximized_list builds the dashboard: the header row, then one
+// block per group.
+panel_build_maximized_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Panel_Palette) {
+	hw_clay.open_element(ctx, hw_clay.id("panel-list"))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.grow(), hw_clay.grow()},
+			layout_direction = .Top_To_Bottom,
+			child_gap        = PANEL_ROW_GAP,
+		},
+		clip = {vertical = true, child_offset = hw_clay.get_scroll_offset(ctx)},
+	})
+
+	index := 0
+	for index < len(rows) {
+		if rows[index].kind == .Header {
+			panel_push_list_header(ctx, rows[index], palette, .Maximized)
+			index += 1
+			continue
 		}
-		hw_clay.pop_element(ctx)
+		if rows[index].kind != .Group {
+			index += 1 // notes and processes belong to a group's block
+			continue
+		}
+		// A group owns the rows that follow it until the next group or header.
+		end := index + 1
+		for end < len(rows) && rows[end].kind != .Group && rows[end].kind != .Header {
+			end += 1
+		}
+		panel_push_group_block(ctx, rows[index:end], index, palette)
+		index = end
 	}
 
 	hw_clay.pop_element(ctx) // list
+}
+
+// panel_push_group_block pushes one group's block: its rows in the text column
+// and its chart spanning the block in the chart column.
+panel_push_group_block :: proc(
+	ctx: ^hw_clay.Context,
+	group_rows: []Ui_Row,
+	row_index: int,
+	palette: Panel_Palette,
+) {
+	block_rows := panel_block_rows(len(group_rows))
+	block_height := f32(block_rows) * PANEL_ROW_HEIGHT
+	group_row := group_rows[0]
+
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-block", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.grow(), hw_clay.fixed(block_height)},
+			layout_direction = .Left_To_Right,
+			child_gap        = PANEL_CHART_GAP,
+		},
+	})
+
+	// The text column: the group's rows, then blank rows that pad the block to
+	// the chart's minimum height.
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-block-rows", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}, layout_direction = .Top_To_Bottom},
+	})
+	for row, offset in group_rows {
+		panel_push_data_row(ctx, row, row_index + offset, palette, .Maximized)
+	}
+	for offset in len(group_rows)..<block_rows {
+		panel_push_blank_row(ctx, row_index + offset)
+	}
+	hw_clay.pop_element(ctx) // text column
+
+	panel_push_chart_column(ctx, group_row, row_index, block_height, palette)
+	hw_clay.pop_element(ctx) // block
+}
+
+// panel_push_blank_row keeps the text column aligned with the chart when a block
+// has fewer rows than its minimum.
+panel_push_blank_row :: proc(ctx: ^hw_clay.Context, row_index: int) {
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-block-blank", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {sizing = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)}},
+	})
+	hw_clay.pop_element(ctx)
+}
+
+// panel_push_chart_column pushes one group's chart: the series area with its
+// value labels, and the time axis under it. panel_draw_charts draws the series
+// into the area after the clay commands.
+panel_push_chart_column :: proc(
+	ctx: ^hw_clay.Context,
+	row: Ui_Row,
+	row_index: int,
+	block_height: f32,
+	palette: Panel_Palette,
+) {
+	body_height := block_height - PANEL_CHART_AXIS_HEIGHT
+	half := body_height / 2
+
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-column", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.fixed(panel_chart_column_width(panel.width)), hw_clay.grow()},
+			layout_direction = .Top_To_Bottom,
+		},
+	})
+
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}},
+	})
+	// The labels float over the series: the current value at the left of each
+	// band, the peak the dot marks at its right.
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-cpu", u32(row_index)),
+		panel_chart_cpu_text(row),
+		{2, 1},
+		.Left_Top,
+		.Left_Top,
+		palette.text,
+	)
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-peak-cpu", u32(row_index)),
+		panel_chart_peak_cpu_text(row),
+		{-2, 1},
+		.Right_Top,
+		.Right_Top,
+		palette.secondary,
+	)
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-memory", u32(row_index)),
+		panel_chart_memory_text(row),
+		{2, half + 1},
+		.Left_Top,
+		.Left_Top,
+		palette.text,
+	)
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-peak-memory", u32(row_index)),
+		panel_chart_peak_memory_text(row),
+		{-2, half + 1},
+		.Right_Top,
+		.Right_Top,
+		palette.secondary,
+	)
+	hw_clay.pop_element(ctx) // series area
+
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-axis", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.grow(), hw_clay.fixed(PANEL_CHART_AXIS_HEIGHT)},
+			layout_direction = .Left_To_Right,
+		},
+	})
+	panel_push_text(
+		ctx,
+		panel_window_text(panel_window_seconds()),
+		FONT_BODY,
+		palette.secondary,
+		{hw_clay.grow(), hw_clay.grow()},
+		.Left,
+	)
+	panel_push_text(ctx, "now", FONT_BODY, palette.secondary, {hw_clay.grow(), hw_clay.grow()}, .Right)
+	hw_clay.pop_element(ctx) // axis
+
+	hw_clay.pop_element(ctx) // chart column
+}
+
+// panel_push_chart_label floats one label inside the series area at a layout
+// offset, so it sits at the point its series is drawn at.
+panel_push_chart_label :: proc(
+	ctx: ^hw_clay.Context,
+	id: hw_clay.Element_Id,
+	text: string,
+	offset: hw_clay.Vector2,
+	element_point, parent_point: hw_clay.Floating_Attach_Point,
+	color: hw_clay.Color,
+) {
+	if text == "" {
+		return
+	}
+	hw_clay.open_element(ctx, id)
+	hw_clay.configure_element(ctx, {
+		layout = {sizing = {hw_clay.fit(), hw_clay.fit()}},
+		floating = {
+			attach_to            = .Parent,
+			attach_points        = {element = element_point, parent = parent_point},
+			offset               = offset,
+			clip_to              = .Attached_Parent,
+			pointer_capture_mode = .Passthrough,
+		},
+	})
+	hw_clay.push_text(ctx, text, {
+		font_id   = u16(FONT_BODY),
+		font_size = PANEL_FONT_SIZE,
+		color     = color,
+		wrap_mode = .None,
+	})
+	hw_clay.pop_element(ctx)
+}
+
+// panel_chart_cpu_text is a chart's CPU label: the current value at the right
+// edge of the window.
+panel_chart_cpu_text :: proc(row: Ui_Row) -> string {
+	if len(row.spark) == 0 {
+		return "CPU -"
+	}
+	return fmt.tprintf("CPU %s", percent_text(f64(row.spark[len(row.spark)-1])))
+}
+
+panel_chart_memory_text :: proc(row: Ui_Row) -> string {
+	if len(row.spark_memory) == 0 {
+		return "MEM -"
+	}
+	return fmt.tprintf("MEM %s", format_bytes(u64(row.spark_memory[len(row.spark_memory)-1])))
+}
+
+// panel_chart_peak_cpu_text is the CPU peak marker's value; the dot on the
+// series marks where it happened.
+panel_chart_peak_cpu_text :: proc(row: Ui_Row) -> string {
+	if row.cpu_peak <= 0 {
+		return ""
+	}
+	return fmt.tprintf("peak %s", percent_text(row.cpu_peak))
+}
+
+panel_chart_peak_memory_text :: proc(row: Ui_Row) -> string {
+	if row.memory_peak == 0 {
+		return ""
+	}
+	return fmt.tprintf("peak %s", format_bytes(row.memory_peak))
 }
 
 panel_row_style :: proc(row: Ui_Row, palette: Panel_Palette) -> (font: ui.Font_Handle, color: hw_clay.Color) {
