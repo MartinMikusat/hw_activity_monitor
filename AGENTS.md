@@ -22,6 +22,13 @@ reports runaway CPU and memory and never kills anything.
   state and the `text_input` editing state; clicks resolve against the previous
   frame's element boxes, so the panel must be settled (visible, not animating)
   for a click to count.
+- The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
+  one place AppKit owns content because the status item is AppKit's). Its Quit
+  boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
+  the daemon immediately, so a plain exit is not a quit. Pointer handling and
+  click resolution run before the drawable is acquired in `panel_draw`, because
+  a click can resize the panel and the frame must be encoded at the size it is
+  presented with.
 - The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
   Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
   reintroduce AppKit view hierarchies for the panel content: layout, text,

@@ -169,7 +169,9 @@ panel_make_controller :: proc() -> ^NS.Object {
 		return nil
 	}
 	if !panel_add_method(class, "panelFrame:", rawptr(panel_frame_callback), "v@:@") ||
-	   !panel_add_method(class, "togglePanel:", rawptr(panel_toggle_callback), "v@:@") {
+	   !panel_add_method(class, "togglePanel:", rawptr(panel_toggle_callback), "v@:@") ||
+	   !panel_add_method(class, "openSettings:", rawptr(panel_open_settings_callback), "v@:@") ||
+	   !panel_add_method(class, "quitApp:", rawptr(panel_quit_callback), "v@:@") {
 		return nil
 	}
 	NS.objc_registerClassPair(class)
@@ -332,8 +334,19 @@ panel_frame_callback :: proc "c" (self: NS.id, cmd: NS.SEL, timer: NS.id) {
 	panel_tick(macos.display_link_timestamp(&panel_window.display_link))
 }
 
+// panel_toggle_callback opens the panel on a left click and pops the status
+// menu on a right click.
 panel_toggle_callback :: proc "c" (self: NS.id, cmd: NS.SEL, sender: NS.id) {
 	context = runtime.default_context()
+	app := msg_id0(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+	event := app == nil ? nil : msg_id0(app, sel_registerName("currentEvent"))
+	if event != nil {
+		event_type := NS.Event_type((^NS.Event)(event))
+		if event_type == .RightMouseUp || event_type == .RightMouseDown {
+			status_menu_show(sender, event)
+			return
+		}
+	}
 	panel_window_toggle()
 }
 

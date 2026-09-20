@@ -13,6 +13,10 @@ import "core:strings"
 import "core:unicode/utf8"
 
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
+// NSEventMask values are one bit per event type; the status button must be told
+// to send its action for right clicks too, so the menu can pop up.
+NSEVENT_MASK_LEFT_MOUSE_UP :: u64(1 << 2)
+NSEVENT_MASK_RIGHT_MOUSE_UP :: u64(1 << 4)
 
 Ui_Row_Kind :: enum {
 	Header,
@@ -304,6 +308,11 @@ ui_start :: proc() -> bool {
 	}
 	msg_void_id(button, sel_registerName("setTarget:"), panel_window.controller)
 	msg_void_sel(button, sel_registerName("setAction:"), sel_registerName("togglePanel:"))
+	msg_void_u(
+		button,
+		sel_registerName("sendActionOn:"),
+		NSEVENT_MASK_LEFT_MOUSE_UP | NSEVENT_MASK_RIGHT_MOUSE_UP,
+	)
 	return true
 }
 

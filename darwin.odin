@@ -78,6 +78,21 @@ msg_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) -> Id {
 	return send(receiver, selector, a, b, c)
 }
 
+msg_id_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c, d: Id) -> Id {
+	send := transmute(proc "c" (Id, Sel, Id, Id, Id, Id) -> Id)objc_send_address
+	return send(receiver, selector, a, b, c, d)
+}
+
+msg_void_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) {
+	send := transmute(proc "c" (Id, Sel, Id, Id, Id))objc_send_address
+	send(receiver, selector, a, b, c)
+}
+
+msg_void_u :: proc(receiver: Id, selector: Sel, value: u64) {
+	send := transmute(proc "c" (Id, Sel, u64))objc_send_address
+	send(receiver, selector, value)
+}
+
 msg_id_f64 :: proc(receiver: Id, selector: Sel, value: f64) -> Id {
 	send := transmute(proc "c" (Id, Sel, f64) -> Id)objc_send_address
 	return send(receiver, selector, value)

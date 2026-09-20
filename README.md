@@ -57,6 +57,11 @@ the rows show. Saving writes
 change for the worker, which picks it up on its next tick — the accumulated
 history survives. Escape or clicking outside closes the modal without saving.
 
+Right-clicking the status item opens its menu: **Open Settings** brings up the
+panel already in the modal, and **Quit hw_activity_monitor** stops the daemon.
+Because the LaunchAgent keeps the process alive, Quit unloads the agent first;
+it stays stopped until `./install.sh` runs again or you log back in.
+
 The panel is not an AppKit view hierarchy: `panel.odin` lays the list out with
 hw_clay every frame and draws it through the ui_framework renderer (CoreText
 text, draw list, Metal) into a borderless non-activating panel backed by a
