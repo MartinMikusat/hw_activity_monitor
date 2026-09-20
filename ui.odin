@@ -741,6 +741,8 @@ ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 	if previous != nil {
 		ui_snapshot_destroy(previous)
 	}
+	// The title string and any other per-snapshot temporaries are done.
+	free_all(context.temp_allocator)
 }
 
 ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {

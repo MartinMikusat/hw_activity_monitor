@@ -52,7 +52,7 @@ UI_PROCESS_MIN_PERCENT :: 1.0
 UI_PROCESS_MEMORY_MIN_MB :: 512
 SETTINGS_ROW_COUNT :: 9
 SETTINGS_FIELD_WIDTH :: f32(90)
-SETTINGS_CHECK_SIZE :: f32(16)
+SETTINGS_CHECK_WIDTH :: f32(30)
 SETTINGS_BUTTON_WIDTH :: f32(64)
 FONT_BODY :: ui.Font_Handle(1)
 FONT_BOLD :: ui.Font_Handle(2)
@@ -411,6 +411,9 @@ panel_draw :: proc() {
 	if panel.layer == nil || panel.queue == nil {
 		return
 	}
+	// Per-frame strings (rank numbers, bracketed labels) live in the temporary
+	// allocator; release them once the frame has been encoded.
+	defer free_all(context.temp_allocator)
 	panel.drawing = true
 	defer panel.drawing = false
 
@@ -691,8 +694,20 @@ panel_settings_row_open :: proc(ctx: ^hw_clay.Context, index: int) {
 	})
 }
 
-// panel_push_field pushes one editable value box; the text is left aligned so
-// the caret can be measured from the box origin.
+// panel_hovered reports whether the pointer is over this element in the
+// previous frame's layout. Hover styling needs a redraw on pointer moves, which
+// panel_pointer_update schedules.
+panel_hovered :: proc(id: hw_clay.Element_Id) -> bool {
+	for over in hw_clay.get_pointer_over_ids(&panel.clay) {
+		if over == id {
+			return true
+		}
+	}
+	return false
+}
+
+// panel_push_field pushes one editable value box. It has no border: the subtle
+// background marks the editable area, and focus or hover brightens it.
 panel_push_field :: proc(
 	ctx: ^hw_clay.Context,
 	id: hw_clay.Element_Id,
@@ -700,6 +715,7 @@ panel_push_field :: proc(
 	focused: bool,
 	palette: Panel_Palette,
 ) {
+	hovered := panel_hovered(id)
 	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
 		layout = {
@@ -707,9 +723,8 @@ panel_push_field :: proc(
 			child_alignment = {x = .Left, y = .Center},
 			padding         = {left = 4, right = 4},
 		},
-		background_color = focused ? palette.field_focus : palette.field,
+		background_color = focused || hovered ? palette.field_focus : palette.field,
 		corner_radius    = hw_clay.corner_radius_all(4),
-		border           = {color = palette.border, width = hw_clay.border_all(1)},
 	})
 	hw_clay.push_text(ctx, text, {
 		font_id   = u16(FONT_BODY),
@@ -720,8 +735,9 @@ panel_push_field :: proc(
 	hw_clay.pop_element(ctx)
 }
 
-// panel_push_checkbox pushes a full-row toggle: label, then a small box that
-// shows a check mark. The row carries the id, so the whole line is clickable.
+// panel_push_checkbox pushes a full-row toggle: label, then a bracketed mark.
+// The row carries the id, so the whole line is clickable; hovering swaps the
+// mark's colors like a button.
 panel_push_checkbox :: proc(
 	ctx: ^hw_clay.Context,
 	id: hw_clay.Element_Id,
@@ -729,57 +745,57 @@ panel_push_checkbox :: proc(
 	checked: bool,
 	palette: Panel_Palette,
 ) {
+	hovered := panel_hovered(id)
 	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
 		layout = {
 			sizing          = {hw_clay.grow(), hw_clay.grow()},
 			child_alignment = {y = .Center},
-			child_gap       = 8,
+			child_gap       = PANEL_ROW_GAP,
 		},
 	})
 	panel_push_text(ctx, label, FONT_BODY, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
 	hw_clay.open_element(ctx)
 	hw_clay.configure_element(ctx, {
 		layout = {
-			sizing          = {hw_clay.fixed(SETTINGS_CHECK_SIZE), hw_clay.fixed(SETTINGS_CHECK_SIZE)},
-			child_alignment = {x = .Center, y = .Center},
+			sizing          = {hw_clay.fixed(SETTINGS_CHECK_WIDTH), hw_clay.grow()},
+			child_alignment = {x = .Right, y = .Center},
 		},
-		background_color = checked ? palette.field_focus : palette.field,
-		corner_radius    = hw_clay.corner_radius_all(4),
-		border           = {color = palette.border, width = hw_clay.border_all(1)},
+		background_color = hovered ? palette.text : hw_clay.Color{},
+		corner_radius    = hw_clay.corner_radius_all(3),
 	})
-	if checked {
-		hw_clay.push_text(ctx, "✓", {
-			font_id   = u16(FONT_BODY),
-			font_size = PANEL_FONT_SIZE,
-			color     = palette.text,
-			wrap_mode = .None,
-		})
-	}
+	hw_clay.push_text(ctx, checked ? "[✓]" : "[ ]", {
+		font_id   = u16(FONT_BODY),
+		font_size = PANEL_FONT_SIZE,
+		color     = hovered ? palette.background : palette.text,
+		wrap_mode = .None,
+	})
 	hw_clay.pop_element(ctx)
 	hw_clay.pop_element(ctx)
 }
 
+// panel_push_button pushes a bracketed text button: no chrome, and on hover the
+// text and background colors swap.
 panel_push_button :: proc(
 	ctx: ^hw_clay.Context,
 	id: hw_clay.Element_Id,
 	label: string,
 	palette: Panel_Palette,
 ) {
+	hovered := panel_hovered(id)
 	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
 		layout = {
 			sizing          = {hw_clay.fixed(SETTINGS_BUTTON_WIDTH), hw_clay.grow()},
 			child_alignment = {x = .Center, y = .Center},
 		},
-		background_color = palette.field,
-		corner_radius    = hw_clay.corner_radius_all(4),
-		border           = {color = palette.border, width = hw_clay.border_all(1)},
+		background_color = hovered ? palette.text : hw_clay.Color{},
+		corner_radius    = hw_clay.corner_radius_all(3),
 	})
-	hw_clay.push_text(ctx, label, {
+	hw_clay.push_text(ctx, fmt.tprintf("[%s]", label), {
 		font_id   = u16(FONT_BODY),
 		font_size = PANEL_FONT_SIZE,
-		color     = palette.text,
+		color     = hovered ? palette.background : palette.text,
 		wrap_mode = .None,
 	})
 	hw_clay.pop_element(ctx)

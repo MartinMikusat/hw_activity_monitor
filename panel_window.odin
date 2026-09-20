@@ -114,6 +114,7 @@ panel_window_init :: proc() -> bool {
 	panel.window = window
 
 	msg_void_bool(window, sel_registerName("setOpaque:"), false)
+	msg_void_bool(window, sel_registerName("setAcceptsMouseMovedEvents:"), true)
 	msg_void_id(window, sel_registerName("setBackgroundColor:"), msg_id0(objc_getClass("NSColor"), sel_registerName("clearColor")))
 	msg_void_bool(window, sel_registerName("setHasShadow:"), false)
 	msg_void_bool(window, sel_registerName("setMovable:"), false)
