@@ -42,9 +42,6 @@ Panel_Window :: struct {
 	pointer_valid: bool,
 	pointer_down:  bool,
 	click_pending: bool,
-	// Set when the panel hides with settings open: the modal content stays for
-	// the close animation, and settings close once the window is ordered out.
-	close_settings_pending: bool,
 }
 
 panel_window: Panel_Window
@@ -264,6 +261,9 @@ panel_window_toggle :: proc() {
 	panel_window_show()
 }
 
+// panel_window_show orders the panel in. The list fades and scales in under the
+// icon; the settings modal appears at once, with no fade or scale, because it is
+// a utility view rather than the panel's own appearance.
 panel_window_show :: proc() {
 	window := panel_window.window
 	if window == nil {
@@ -273,24 +273,33 @@ panel_window_show :: proc() {
 	// the operator presses Sort again.
 	ui_sort_now()
 	panel_window_position()
-	panel.progress = 0
-	panel_window.progress = 0
-	panel_window.opening = true
-	panel_window.animating = true
 	panel_window.visible = true
+	if settings.open {
+		panel.progress = 1
+		panel_window.progress = 1
+		panel_window.animating = false
+		// Fill the layer before the window is ordered in, so its first
+		// composite already shows the modal instead of the last hidden frame.
+		panel_draw()
+	} else {
+		panel.progress = 0
+		panel_window.progress = 0
+		panel_window.opening = true
+		panel_window.animating = true
+	}
 	panel_window.has_time = false
-	panel_window.close_settings_pending = false
 	msg_void0(window, sel_registerName("makeKeyAndOrderFront:"))
 	if panel_window.view != nil {
 		_ = window->makeFirstResponder((^NS.Responder)(panel_window.view))
 	}
-	macos.display_link_set_paused(&panel_window.display_link, false)
+	if panel_window.animating {
+		macos.display_link_set_paused(&panel_window.display_link, false)
+	}
 	panel_check_geometry("show")
 }
 
-// panel_window_hide closes the panel. Settings stay open through the close
-// animation so the list never flashes mid-dismiss; they close once the window
-// is ordered out.
+// panel_window_hide closes the panel. The list fades and scales out; the settings
+// modal goes at once, so dismissing it is not an animation.
 panel_window_hide :: proc() {
 	if !panel_window.visible {
 		return
@@ -298,15 +307,23 @@ panel_window_hide :: proc() {
 	if panel_window.animating && !panel_window.opening {
 		return // already closing
 	}
-	if settings.open {
-		panel_window.close_settings_pending = true
-	}
 	panel_window.pointer_valid = false
 	panel_window.pointer_down = false
 	panel_window.click_pending = false
 	panel_window.opening = false
-	panel_window.animating = true
 	panel_window.has_time = false
+	if settings.open {
+		// Order out immediately: no fade, no scale, and no modal left behind.
+		panel_window.animating = false
+		panel_window.visible = false
+		panel.progress = 0
+		panel_window.progress = 0
+		msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
+		settings_close()
+		panel_check_geometry("hide")
+		return
+	}
+	panel_window.animating = true
 	macos.display_link_set_paused(&panel_window.display_link, false)
 	panel_check_geometry("hide")
 }
@@ -349,10 +366,6 @@ panel_tick :: proc(timestamp: f64) {
 				panel_window.animating = false
 				panel_window.visible = false
 				msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
-				if panel_window.close_settings_pending {
-					panel_window.close_settings_pending = false
-					settings_close()
-				}
 			}
 		}
 		panel.progress = panel_window.progress

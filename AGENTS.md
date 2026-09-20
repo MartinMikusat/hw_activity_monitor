@@ -60,8 +60,10 @@ reports runaway CPU and memory and never kills anything.
   acquiring. `panel_mark_dirty` defers the draw to the next main-queue turn
   (coalesced) so it cannot race a window resize; while a draw is in flight it
   only sets `draw_dirty`, and pointer/click handling runs before the drawable is
-  acquired. Settings stay open through the close animation and close only after
-  the window is ordered out, so dismissing the panel never flashes the list.
+  acquired. The list fades and scales in and out; the settings modal does not
+  animate at all. It is drawn into the layer before the window is ordered in, so
+  its first composite already shows the modal, and dismissing it orders the
+  window out and closes settings in the same turn.
   `panel_check_geometry` logs a `panel_geometry` event when the window or
   drawable height disagrees with the layout height: that mismatch is the
   signature of a stale frame, and the event keeps the numbers for next time.
