@@ -11,6 +11,7 @@ hw-odin test "$ROOT" \
   -define:ODIN_TEST_THREADS=1 \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \
+  -collection:hw_odin_ui_components="$ODIN_LIBS/hw_odin_ui_components" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics"
 "$ROOT/build.sh" release >/dev/null
 echo "[hw_activity_monitor] tests passed"

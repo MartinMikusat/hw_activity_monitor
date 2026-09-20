@@ -13,6 +13,15 @@ reports runaway CPU and memory and never kills anything.
   `dispatch_async_f` to the main queue, which frees the snapshot it replaced.
   Never sample or touch AppKit off the main thread; if `ui_start` fails,
   `run_headless` keeps alerting with no UI.
+- Settings live in `settings.odin`: the in-panel modal edits the history window,
+  the sampling interval, and the four stat columns. Saving writes config.json
+  and calls `monitor_request_config`, which stages the config under a mutex;
+  the worker applies it at the start of its next tick, so the main thread never
+  blocks and the history survives. `monitor.config` and `monitor.policy` are
+  worker-owned after startup. Panel mouse and key events feed clay's pointer
+  state and the `text_input` editing state; clicks resolve against the previous
+  frame's element boxes, so the panel must be settled (visible, not animating)
+  for a click to count.
 - The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
   Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
   reintroduce AppKit view hierarchies for the panel content: layout, text,
@@ -36,8 +45,8 @@ reports runaway CPU and memory and never kills anything.
   do not turn it into a rewritten snapshot or add high-frequency sampling
   events. Events: `started`, `alert` (kind `cpu` or `memory`, name, processes,
   cpu_percent, memory_bytes, sustained_seconds, pids, notified),
-  `notification_authorization`, `notification_failed`. Crash output stays in
-  `~/Library/Logs/hw_activity_monitor.launchd.log`.
+  `settings_saved`, `notification_authorization`, `notification_failed`. Crash
+  output stays in `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`
   (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). `proc_pid_rusage`
   supplies both the cumulative CPU times and `ri_phys_footprint`, the memory

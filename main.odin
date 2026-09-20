@@ -12,19 +12,67 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:thread"
 import "core:time"
 
 Monitor_State :: struct {
-	config:  Config,
-	policy:  Policy,
-	log:     Log,
-	sampler: Sampler,
-	tracker: Tracker,
-	history: History,
+	config:      Config,
+	policy:      Policy,
+	log:         Log,
+	sampler:     Sampler,
+	tracker:     Tracker,
+	history:     History,
+	mutex:       sync.Mutex,
+	pending:     Config,
+	has_pending: bool,
 }
 
 monitor: Monitor_State
+
+// policy_from_config maps the user config onto the rule engine's policy.
+policy_from_config :: proc(config: Config) -> Policy {
+	return {
+		cpu_percent  = config.cpu_percent,
+		memory_bytes = u64(config.memory_mb * f64(1 << 20)),
+		sustained    = time.Duration(config.sustained_seconds * f64(time.Second)),
+		cooldown     = time.Duration(config.cooldown_seconds * f64(time.Second)),
+		safelist     = config.safelist,
+	}
+}
+
+// monitor_request_config stages a live settings change. The worker applies it
+// at the start of its next tick, so the main thread never blocks on a scan and
+// the accumulated history survives the change.
+monitor_request_config :: proc(config: Config) {
+	sync.lock(&monitor.mutex)
+	monitor.pending = config
+	monitor.has_pending = true
+	sync.unlock(&monitor.mutex)
+}
+
+// monitor_apply_pending_config moves a staged config into the worker-owned
+// state and records the change. Worker thread only.
+monitor_apply_pending_config :: proc() {
+	sync.lock(&monitor.mutex)
+	defer sync.unlock(&monitor.mutex)
+	if !monitor.has_pending {
+		return
+	}
+	monitor.config = monitor.pending
+	monitor.policy = policy_from_config(monitor.pending)
+	monitor.history.window = time.Duration(monitor.pending.window_seconds * f64(time.Second))
+	monitor.has_pending = false
+	log_event(monitor.log, "settings_saved", fmt.tprintf(
+		"\"window_seconds\":%.0f,\"interval_seconds\":%.0f,\"show_cpu\":%v,\"show_memory\":%v,\"show_window_cpu\":%v,\"show_window_memory\":%v",
+		monitor.config.window_seconds,
+		monitor.config.interval_seconds,
+		monitor.config.show_cpu,
+		monitor.config.show_memory,
+		monitor.config.show_window_cpu,
+		monitor.config.show_window_memory,
+	))
+}
 
 main :: proc() {
 	once := false
@@ -90,13 +138,7 @@ run_once :: proc(config: Config) {
 
 run_app :: proc(config: Config) {
 	monitor.config = config
-	monitor.policy = Policy{
-		cpu_percent  = config.cpu_percent,
-		memory_bytes = u64(config.memory_mb * f64(1 << 20)),
-		sustained    = time.Duration(config.sustained_seconds * f64(time.Second)),
-		cooldown     = time.Duration(config.cooldown_seconds * f64(time.Second)),
-		safelist     = config.safelist,
-	}
+	monitor.policy = policy_from_config(config)
 	monitor.history.window = time.Duration(config.window_seconds * f64(time.Second))
 	monitor.log = log_open()
 	backend := notify_init(monitor.log)
@@ -129,8 +171,8 @@ run_app :: proc(config: Config) {
 monitor_worker :: proc(_: ^thread.Thread) {
 	context = runtime.default_context()
 	for {
-		monitor_tick()
-		time.sleep(time.Duration(monitor.config.interval_seconds * f64(time.Second)))
+		interval := monitor_tick()
+		time.sleep(time.Duration(interval * f64(time.Second)))
 	}
 }
 
@@ -138,15 +180,16 @@ monitor_worker :: proc(_: ^thread.Thread) {
 // cannot start.
 run_headless :: proc() {
 	for {
-		monitor_tick()
-		time.sleep(time.Duration(monitor.config.interval_seconds * f64(time.Second)))
+		interval := monitor_tick()
+		time.sleep(time.Duration(interval * f64(time.Second)))
 	}
 }
 
 // monitor_tick is one sampling pass: scan, evaluate alerts, log and notify,
-// then hand a snapshot to the menu bar UI. Called by the worker thread, or by
-// the headless loop.
-monitor_tick :: proc() {
+// then hand a snapshot to the menu bar UI. It returns the interval to wait
+// before the next pass. Called by the worker thread, or by the headless loop.
+monitor_tick :: proc() -> f64 {
+	monitor_apply_pending_config()
 	samples := sampler_scan(&monitor.sampler)
 	groups := group_samples(samples)
 	now := time.tick_now()
@@ -175,8 +218,9 @@ monitor_tick :: proc() {
 		Ui_Build_Options{
 			total_percent = ui_total_percent(samples, ui_active_cpu_count()),
 			process_count = len(samples),
-			stats = config_stat_selection(monitor.config),
+			config        = monitor.config,
 		},
 	)
 	free_all(context.temp_allocator)
+	return monitor.config.interval_seconds
 }

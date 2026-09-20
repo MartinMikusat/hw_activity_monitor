@@ -44,14 +44,21 @@ UI_GROUP_MEMORY_MIN_MB :: 1024
 UI_PROCESS_LIMIT_PER_GROUP :: 4
 UI_PROCESS_MIN_PERCENT :: 1.0
 UI_PROCESS_MEMORY_MIN_MB :: 512
+SETTINGS_ROW_COUNT :: 9
+SETTINGS_FIELD_WIDTH :: f32(90)
+SETTINGS_CHECK_SIZE :: f32(16)
+SETTINGS_BUTTON_WIDTH :: f32(64)
 FONT_BODY :: ui.Font_Handle(1)
 FONT_BOLD :: ui.Font_Handle(2)
 
 Panel_Palette :: struct {
-	background: hw_clay.Color,
-	border:     hw_clay.Color,
-	text:       hw_clay.Color,
-	secondary:  hw_clay.Color,
+	background:  hw_clay.Color,
+	border:      hw_clay.Color,
+	text:        hw_clay.Color,
+	secondary:   hw_clay.Color,
+	field:       hw_clay.Color,
+	field_focus: hw_clay.Color,
+	error:       hw_clay.Color,
 }
 
 Panel :: struct {
@@ -138,7 +145,7 @@ panel_stats :: proc() -> Stat_Selection {
 	if ui_state.snapshot == nil {
 		return {cpu = true, memory = true, window_cpu = true, window_memory = true}
 	}
-	return ui_state.snapshot.stats
+	return config_stat_selection(ui_state.snapshot.config)
 }
 
 // panel_name_chars reports how many characters fit in the name column for a
@@ -208,9 +215,13 @@ panel_draw_sparklines :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 	}
 }
 
-// panel_content_changed recomputes the panel height for the current rows,
+// panel_content_changed recomputes the panel height for the current content,
 // resizes the window, and redraws if nothing else is driving the clock.
 panel_content_changed :: proc() {
+	if settings.open {
+		panel_settings_resized()
+		return
+	}
 	rows := panel_rows()
 	height := clamp(
 		f32(PANEL_PADDING_VERTICAL * 2) + f32(len(rows)) * PANEL_ROW_HEIGHT,
@@ -276,7 +287,11 @@ panel_draw :: proc() {
 	coretext.begin_frame(&panel.text, scale, metal.atlas_io(&panel.gpu))
 	draw.list_reset(&panel.list)
 
-	hw_clay.set_pointer_state(&panel.clay, {-1, -1}, false)
+	hw_clay.set_pointer_state(&panel.clay, panel_pointer_position(), panel_window.pointer_down)
+	if panel_window.click_pending {
+		panel_window.click_pending = false
+		panel_handle_click()
+	}
 	panel_apply_scroll(PANEL_FRAME_SECONDS)
 	hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
 	rows := panel_rows()
@@ -292,7 +307,11 @@ panel_draw :: proc() {
 		panel.from.y,
 	))
 	hw_clay_ui.render_commands(&panel.renderer, commands)
-	panel_draw_sparklines(rows, palette)
+	if settings.open {
+		panel_draw_settings_caret(palette)
+	} else {
+		panel_draw_sparklines(rows, palette)
+	}
 	draw.pop_transform(&panel.list)
 	draw.pop_opacity(&panel.list)
 
@@ -340,6 +359,18 @@ panel_build_layout :: proc(
 		border           = {color = palette.border, width = hw_clay.border_all(1)},
 	})
 
+	if settings.open {
+		panel_settings_rows(ctx, palette)
+	} else {
+		panel_build_rows_list(ctx, rows, palette)
+	}
+
+	hw_clay.pop_element(ctx) // root
+	return hw_clay.end_layout(ctx, PANEL_FRAME_SECONDS)
+}
+
+// panel_build_rows_list builds the scrollable group/process list.
+panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Panel_Palette) {
 	hw_clay.open_element(ctx, hw_clay.id("panel-list"))
 	hw_clay.configure_element(ctx, {
 		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}, layout_direction = .Top_To_Bottom},
@@ -361,9 +392,10 @@ panel_build_layout :: proc(
 		// The name grows so the stats sit against the panel's right padding.
 		// Every row pushes the same enabled columns, empty where a row has no
 		// value, so the table stays aligned vertically. The header spans the
-		// full width because it has no stats.
+		// full width because it has no stats; it carries the settings button.
 		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
 		if row.kind == .Header {
+			panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
 			hw_clay.pop_element(ctx)
 			continue
 		}
@@ -421,8 +453,6 @@ panel_build_layout :: proc(
 	}
 
 	hw_clay.pop_element(ctx) // list
-	hw_clay.pop_element(ctx) // root
-	return hw_clay.end_layout(ctx, PANEL_FRAME_SECONDS)
 }
 
 panel_row_style :: proc(row: Ui_Row, palette: Panel_Palette) -> (font: ui.Font_Handle, color: hw_clay.Color) {
@@ -469,22 +499,280 @@ panel_push_text :: proc(
 	hw_clay.pop_element(ctx)
 }
 
+// ---------------------------------------------------------------- settings
+
+// panel_settings_resized sizes the panel for the modal content and redraws.
+panel_settings_resized :: proc() {
+	height := clamp(
+		f32(PANEL_PADDING_VERTICAL*2) + f32(SETTINGS_ROW_COUNT)*PANEL_ROW_HEIGHT,
+		PANEL_MIN_HEIGHT,
+		PANEL_MAX_HEIGHT,
+	)
+	panel_set_size(panel.width, height)
+	panel_mark_dirty()
+}
+
+panel_settings_field_element :: proc(field: Settings_Field) -> hw_clay.Element_Id {
+	return field == .Window ? hw_clay.id("settings-window") : hw_clay.id("settings-interval")
+}
+
+panel_settings_row_open :: proc(ctx: ^hw_clay.Context, index: int) {
+	hw_clay.open_element(ctx, hw_clay.id_indexed("settings-row", u32(index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
+			child_alignment = {y = .Center},
+			child_gap       = 8,
+		},
+	})
+}
+
+// panel_push_field pushes one editable value box; the text is left aligned so
+// the caret can be measured from the box origin.
+panel_push_field :: proc(
+	ctx: ^hw_clay.Context,
+	id: hw_clay.Element_Id,
+	text: string,
+	focused: bool,
+	palette: Panel_Palette,
+) {
+	hw_clay.open_element(ctx, id)
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.fixed(SETTINGS_FIELD_WIDTH), hw_clay.grow()},
+			child_alignment = {x = .Left, y = .Center},
+			padding         = {left = 4, right = 4},
+		},
+		background_color = focused ? palette.field_focus : palette.field,
+		corner_radius    = hw_clay.corner_radius_all(4),
+		border           = {color = palette.border, width = hw_clay.border_all(1)},
+	})
+	hw_clay.push_text(ctx, text, {
+		font_id   = u16(FONT_BODY),
+		font_size = PANEL_FONT_SIZE,
+		color     = palette.text,
+		wrap_mode = .None,
+	})
+	hw_clay.pop_element(ctx)
+}
+
+// panel_push_checkbox pushes a full-row toggle: label, then a small box that
+// shows a check mark. The row carries the id, so the whole line is clickable.
+panel_push_checkbox :: proc(
+	ctx: ^hw_clay.Context,
+	id: hw_clay.Element_Id,
+	label: string,
+	checked: bool,
+	palette: Panel_Palette,
+) {
+	hw_clay.open_element(ctx, id)
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.grow(), hw_clay.grow()},
+			child_alignment = {y = .Center},
+			child_gap       = 8,
+		},
+	})
+	panel_push_text(ctx, label, FONT_BODY, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	hw_clay.open_element(ctx)
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.fixed(SETTINGS_CHECK_SIZE), hw_clay.fixed(SETTINGS_CHECK_SIZE)},
+			child_alignment = {x = .Center, y = .Center},
+		},
+		background_color = checked ? palette.field_focus : palette.field,
+		corner_radius    = hw_clay.corner_radius_all(4),
+		border           = {color = palette.border, width = hw_clay.border_all(1)},
+	})
+	if checked {
+		hw_clay.push_text(ctx, "✓", {
+			font_id   = u16(FONT_BODY),
+			font_size = PANEL_FONT_SIZE,
+			color     = palette.text,
+			wrap_mode = .None,
+		})
+	}
+	hw_clay.pop_element(ctx)
+	hw_clay.pop_element(ctx)
+}
+
+panel_push_button :: proc(
+	ctx: ^hw_clay.Context,
+	id: hw_clay.Element_Id,
+	label: string,
+	palette: Panel_Palette,
+) {
+	hw_clay.open_element(ctx, id)
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = {hw_clay.fixed(SETTINGS_BUTTON_WIDTH), hw_clay.grow()},
+			child_alignment = {x = .Center, y = .Center},
+		},
+		background_color = palette.field,
+		corner_radius    = hw_clay.corner_radius_all(4),
+		border           = {color = palette.border, width = hw_clay.border_all(1)},
+	})
+	hw_clay.push_text(ctx, label, {
+		font_id   = u16(FONT_BODY),
+		font_size = PANEL_FONT_SIZE,
+		color     = palette.text,
+		wrap_mode = .None,
+	})
+	hw_clay.pop_element(ctx)
+}
+
+// panel_settings_rows builds the modal content inside the already open root.
+panel_settings_rows :: proc(ctx: ^hw_clay.Context, palette: Panel_Palette) {
+	row_index := 0
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_text(ctx, "Settings", FONT_BOLD, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_text(ctx, "History window (minutes)", FONT_BODY, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	panel_push_field(
+		ctx,
+		hw_clay.id("settings-window"),
+		settings.texts[.Window],
+		settings.editing.active_field == settings_field_id(.Window),
+		palette,
+	)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_text(ctx, "Sample interval (seconds)", FONT_BODY, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	panel_push_field(
+		ctx,
+		hw_clay.id("settings-interval"),
+		settings.texts[.Interval],
+		settings.editing.active_field == settings_field_id(.Interval),
+		palette,
+	)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_text(ctx, "Columns", FONT_BODY, palette.secondary, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_checkbox(ctx, hw_clay.id("check-cpu"), "CPU", settings.draft.show_cpu, palette)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_checkbox(ctx, hw_clay.id("check-memory"), "Memory", settings.draft.show_memory, palette)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_checkbox(
+		ctx,
+		hw_clay.id("check-window-cpu"),
+		"10-minute CPU average",
+		settings.draft.show_window_cpu,
+		palette,
+	)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_checkbox(
+		ctx,
+		hw_clay.id("check-window-memory"),
+		"10-minute memory change",
+		settings.draft.show_window_memory,
+		palette,
+	)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	message_color := settings.message_is_error ? palette.error : palette.secondary
+	panel_push_text(ctx, settings.message, FONT_BODY, message_color, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	panel_push_button(ctx, hw_clay.id("settings-cancel"), "Cancel", palette)
+	panel_push_button(ctx, hw_clay.id("settings-save"), "Save", palette)
+	hw_clay.pop_element(ctx)
+}
+
+// panel_pointer_position reports the pointer in clay coordinates; before the
+// pointer has been seen, it is parked off panel so nothing is hovered.
+panel_pointer_position :: proc() -> hw_clay.Vector2 {
+	if !panel_window.pointer_valid {
+		return {-1, -1}
+	}
+	return {panel_window.pointer.x, panel_window.pointer.y}
+}
+
+// panel_handle_click resolves a mouse-up against the previous frame's layout,
+// which is what the user saw when they pressed.
+panel_handle_click :: proc() {
+	if !panel_window.visible || panel_window.animating {
+		return
+	}
+	for id in hw_clay.get_pointer_over_ids(&panel.clay) {
+		if settings_click(id) {
+			return
+		}
+		if id == hw_clay.id("settings-gear") {
+			settings_open()
+			return
+		}
+	}
+}
+
+// panel_draw_settings_caret draws the caret in the focused settings field,
+// after the clay commands, using the field's box and the measured prefix.
+panel_draw_settings_caret :: proc(palette: Panel_Palette) {
+	if !settings.open {
+		return
+	}
+	field, found := settings_field_for_id(settings.editing.active_field)
+	if !found {
+		return
+	}
+	text := settings.texts[field]
+	caret := clamp(settings.editing.caret_byte_offset, 0, len(text))
+	data := hw_clay.get_element_data(&panel.clay, panel_settings_field_element(field))
+	if !data.found {
+		return
+	}
+	box := hw_clay_ui.rect_to_draw(&panel.renderer, data.bounding_box)
+	config := hw_clay.Text_Config{font_id = u16(FONT_BODY), font_size = PANEL_FONT_SIZE}
+	prefix_width := hw_clay_ui.measure_text(text[:caret], &config, &panel.renderer).width
+	draw.solid(
+		&panel.list,
+		{box.x+4+prefix_width, box.y+3, 1, box.h-6},
+		hw_clay_ui.color_to_draw(palette.text),
+	)
+}
+
 // panel_palette follows the system appearance; the panel is opaque so it does
 // not need a backdrop blur, only a background that matches the current mode.
 panel_palette :: proc() -> Panel_Palette {
 	if panel_is_dark() {
 		return {
-			background = {24, 24, 26, 255},
-			border     = {255, 255, 255, 28},
-			text       = {235, 235, 240, 255},
-			secondary  = {145, 145, 155, 255},
+			background  = {24, 24, 26, 255},
+			border      = {255, 255, 255, 28},
+			text        = {235, 235, 240, 255},
+			secondary   = {145, 145, 155, 255},
+			field       = {40, 40, 44, 255},
+			field_focus = {56, 56, 62, 255},
+			error       = {235, 118, 118, 255},
 		}
 	}
 	return {
-		background = {250, 250, 252, 255},
-		border     = {0, 0, 0, 24},
-		text       = {30, 30, 34, 255},
-		secondary  = {105, 105, 115, 255},
+		background  = {250, 250, 252, 255},
+		border      = {0, 0, 0, 24},
+		text        = {30, 30, 34, 255},
+		secondary   = {105, 105, 115, 255},
+		field       = {236, 236, 240, 255},
+		field_focus = {224, 224, 230, 255},
+		error       = {190, 60, 60, 255},
 	}
 }
 

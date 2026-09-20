@@ -29,6 +29,7 @@ esac
 hw-odin build "$ROOT" $FLAGS \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \
+  -collection:hw_odin_ui_components="$ODIN_LIBS/hw_odin_ui_components" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics" \
   -out:"$BUILD/hw_activity_monitor"
 echo "[hw_activity_monitor] built $BUILD/hw_activity_monitor ($MODE)"

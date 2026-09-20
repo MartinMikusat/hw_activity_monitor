@@ -56,7 +56,7 @@ Ui_Snapshot :: struct {
 	allocator:     runtime.Allocator,
 	total_percent: f64,
 	process_count: int,
-	stats:         Stat_Selection,
+	config:        Config,
 	rows:          []Ui_Row,
 }
 
@@ -120,7 +120,7 @@ sort_by_cpu :: proc(samples: []Process_Sample) {
 Ui_Build_Options :: struct {
 	total_percent: f64,
 	process_count: int,
-	stats:         Stat_Selection,
+	config:        Config, // the snapshot carries it for the settings modal
 }
 
 // ui_build_rows renders the panel contents: a header, then each top group with
@@ -139,6 +139,7 @@ ui_build_rows :: proc(
 	allocator := context.temp_allocator,
 ) -> []Ui_Row {
 	rows := make([dynamic]Ui_Row, 0, 32, allocator)
+	stats := config_stat_selection(options.config)
 	append(&rows, Ui_Row{
 		kind = .Header,
 		name = fmt.aprintf(
@@ -161,7 +162,7 @@ ui_build_rows :: proc(
 		trend_by_name[trend.name] = index
 	}
 
-	name_chars := panel_name_chars(options.stats)
+	name_chars := panel_name_chars(stats)
 	group_count := 0
 	for group in groups {
 		cpu_active := group.cpu_percent >= UI_GROUP_MIN_PERCENT
@@ -188,15 +189,15 @@ ui_build_rows :: proc(
 				allocator = allocator,
 			),
 		}
-		if options.stats.cpu {
+		if stats.cpu {
 			row.cpu = percent_text(group.cpu_percent, allocator)
 		}
-		if options.stats.memory {
+		if stats.memory {
 			row.memory = format_bytes(group.memory_bytes, allocator)
 		}
 		if trend_index, found := trend_by_name[group.name]; found {
 			trend := trends[trend_index]
-			if options.stats.window_cpu {
+			if stats.window_cpu {
 				row.window_cpu = fmt.aprintf(
 					"avg %s",
 					percent_text(trend.cpu_avg, context.temp_allocator),
@@ -209,7 +210,7 @@ ui_build_rows :: proc(
 					}
 				}
 			}
-			if options.stats.window_memory {
+			if stats.window_memory {
 				row.window_memory = format_bytes_delta(trend.memory_growth, allocator)
 			}
 		}
@@ -250,10 +251,10 @@ ui_build_rows :: proc(
 					allocator = allocator,
 				),
 			}
-			if options.stats.cpu {
+			if stats.cpu {
 				process_row.cpu = percent_text(member.cpu_fraction * 100, allocator)
 			}
-			if options.stats.memory {
+			if stats.memory {
 				process_row.memory = format_bytes(member.memory_bytes, allocator)
 			}
 			append(&rows, process_row)
@@ -355,7 +356,7 @@ ui_post_snapshot :: proc(
 		allocator     = context.allocator,
 		total_percent = options.total_percent,
 		process_count = options.process_count,
-		stats         = options.stats,
+		config        = options.config,
 		rows          = rows,
 	}
 	dispatch_async_f(&_dispatch_main_q, snapshot, ui_apply_snapshot_c)

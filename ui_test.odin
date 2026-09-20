@@ -10,7 +10,7 @@ test_stats :: proc() -> Stat_Selection {
 }
 
 test_options :: proc(total_percent: f64, process_count: int) -> Ui_Build_Options {
-	return {total_percent = total_percent, process_count = process_count, stats = test_stats()}
+	return {total_percent = total_percent, process_count = process_count, config = config_defaults()}
 }
 
 @(test)
@@ -78,7 +78,9 @@ test_ui_rows_honor_the_stat_selection :: proc(t: ^testing.T) {
 	groups := group_samples(samples)
 
 	options := test_options(10, 1)
-	options.stats = {window_cpu = true}
+	options.config.show_cpu = false
+	options.config.show_memory = false
+	options.config.show_window_memory = false
 	rows := ui_build_rows(groups, samples, nil, options, context.temp_allocator)
 	testing.expect_value(t, rows[1].cpu, "")
 	testing.expect_value(t, rows[1].memory, "")
@@ -181,7 +183,7 @@ test_snapshot_round_trip_frees_cleanly :: proc(t: ^testing.T) {
 		allocator     = context.allocator,
 		total_percent = options.total_percent,
 		process_count = options.process_count,
-		stats         = options.stats,
+		config        = options.config,
 		rows          = rows,
 	}
 	ui_snapshot_destroy(snapshot)

@@ -8,6 +8,8 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
+import "core:strings"
 
 Config :: struct {
 	interval_seconds:  f64,
@@ -108,4 +110,33 @@ config_validate :: proc(config: ^Config) {
 	}
 	config.sustained_seconds = clamp(config.sustained_seconds, 10, 86400)
 	config.cooldown_seconds = clamp(config.cooldown_seconds, 0, 86400)
+}
+
+// config_apply_fields parses the settings modal's text fields over a draft and
+// clamps the result like config_validate. It returns false when a field is not
+// a number.
+config_apply_fields :: proc(config: ^Config, window_minutes, interval_seconds: string) -> bool {
+	assert(config != nil, "config required")
+	window, window_ok := strconv.parse_f64(strings.trim_space(window_minutes))
+	interval, interval_ok := strconv.parse_f64(strings.trim_space(interval_seconds))
+	if !window_ok || !interval_ok {
+		return false
+	}
+	config.window_seconds = window * 60
+	config.interval_seconds = interval
+	config_validate(config)
+	return true
+}
+
+// config_save writes the whole config as JSON, creating the config directory
+// when it does not exist yet. The daemon reads the file at startup, so this is
+// also the durable record of a settings change.
+config_save :: proc(config: Config, path: string) -> bool {
+	assert(path != "", "config path required")
+	_ = os.make_directory_all(filepath.dir(path))
+	data, marshal_err := json.marshal(config, {pretty = true}, context.temp_allocator)
+	if marshal_err != nil {
+		return false
+	}
+	return os.write_entire_file(path, data) == nil
 }

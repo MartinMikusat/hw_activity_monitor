@@ -46,7 +46,16 @@ Clicking it opens the panel: total CPU and process count, then the top groups
 ordered by CPU with their busiest processes underneath, each row carrying
 "CPU · memory" and pids. A group stays listed while it is above the CPU floor
 or above a 1 GB footprint, so a memory-heavy but idle process is still visible.
+Group rows also carry the rolling window's average CPU, its signed memory
+change, and a sparkline of the CPU series, so slow leaks and ramps are visible.
 The panel sizes itself to the list, up to a maximum height, then scrolls.
+
+The **Settings** button in the panel header opens an in-panel modal that edits
+the history window, the sampling interval, and which of the four stat columns
+the rows show. Saving writes
+`~/Library/Application Support/hw_activity_monitor/config.json` and stages the
+change for the worker, which picks it up on its next tick — the accumulated
+history survives. Escape or clicking outside closes the modal without saving.
 
 The panel is not an AppKit view hierarchy: `panel.odin` lays the list out with
 hw_clay every frame and draws it through the ui_framework renderer (CoreText
@@ -69,14 +78,22 @@ their default):
 ```json
 {
   "interval_seconds": 5,
+  "window_seconds": 600,
   "cpu_percent": 60,
   "memory_mb": 4096,
   "sustained_seconds": 300,
   "cooldown_seconds": 1800,
-  "safelist": ["odin", "clang", "swiftc", "xcodebuild", "zig"]
+  "safelist": ["odin", "clang", "swiftc", "xcodebuild", "zig"],
+  "show_cpu": true,
+  "show_memory": true,
+  "show_window_cpu": true,
+  "show_window_memory": true
 }
 ```
 
+- `interval_seconds` is how often the process table is sampled.
+- `window_seconds` is the rolling history window the panel's trend columns
+  summarize (default ten minutes; clamped to 60 s–24 h).
 - `cpu_percent` is a budget per executable name summed over its processes, in
   percent of one core. Set 150 to catch only multi-instance leaks.
 - `memory_mb` is a footprint budget per executable name summed over its
@@ -90,6 +107,11 @@ their default):
   Defaults cover compilers and VM helpers because builds legitimately peg every
   core and a VM holds its assigned RAM. `hw_activity_monitor` itself is always
   safelisted.
+- `show_*` keys pick the panel's four stat columns: instant CPU, instant
+  memory, windowed CPU average, and windowed memory change.
+
+The settings modal edits `window_seconds`, `interval_seconds`, and the
+`show_*` keys; everything else stays file-edited.
 
 ## Notification delivery
 
@@ -114,9 +136,10 @@ agents and `jq` can read it like a stream:
 Events: `started` (pid and effective config), `ui_ready` (first snapshot
 applied to the menu bar), `alert` (kind `cpu` or `memory`, name, process count,
 group CPU percent, footprint bytes, sustained seconds, pids, whether a banner
-was requested), `notification_authorization` (granted, or the error), and
-`notification_failed` (the API error). Events are rare — one per alert episode —
-so the file is not rotated.
+was requested), `settings_saved` (the window, interval, and column selection
+the worker picked up), `notification_authorization` (granted, or the error),
+and `notification_failed` (the API error). Events are rare — one per alert
+episode — so the file is not rotated.
 
 ```sh
 jq -c 'select(.event=="alert")' ~/Library/Logs/hw_activity_monitor.jsonl

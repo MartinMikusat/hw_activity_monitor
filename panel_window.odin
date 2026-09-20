@@ -27,17 +27,21 @@ PANEL_SCROLL_SETTLE_SECONDS :: f64(0.35)
 NSEVENT_KEY_ESCAPE :: u16(53)
 
 Panel_Window :: struct {
-	window:       ^NS.Panel,
-	view:         ^NS.View,
-	controller:   ^NS.Object,
-	display_link: macos.Display_Link,
-	visible:      bool,
-	animating:    bool,
-	opening:      bool,
-	progress:     f32,
-	last_time:    f64,
-	has_time:     bool,
-	scroll_until: f64,
+	window:        ^NS.Panel,
+	view:          ^NS.View,
+	controller:    ^NS.Object,
+	display_link:  macos.Display_Link,
+	visible:       bool,
+	animating:     bool,
+	opening:       bool,
+	progress:      f32,
+	last_time:     f64,
+	has_time:      bool,
+	scroll_until:  f64,
+	pointer:       [2]f32, // clay coordinates, top-left origin
+	pointer_valid: bool,
+	pointer_down:  bool,
+	click_pending: bool,
 }
 
 panel_window: Panel_Window
@@ -71,8 +75,13 @@ panel_window_init :: proc() -> bool {
 		return false
 	}
 	if !panel_add_method(view_class, "acceptsFirstResponder", rawptr(panel_accepts_first_responder), "B@:") ||
+	   !panel_add_method(view_class, "acceptsFirstMouse:", rawptr(panel_accepts_first_mouse), "B@:@") ||
 	   !panel_add_method(view_class, "scrollWheel:", rawptr(panel_scroll_callback), "v@:@") ||
-	   !panel_add_method(view_class, "keyDown:", rawptr(panel_key_callback), "v@:@") {
+	   !panel_add_method(view_class, "keyDown:", rawptr(panel_key_callback), "v@:@") ||
+	   !panel_add_method(view_class, "mouseDown:", rawptr(panel_mouse_down_callback), "v@:@") ||
+	   !panel_add_method(view_class, "mouseUp:", rawptr(panel_mouse_up_callback), "v@:@") ||
+	   !panel_add_method(view_class, "mouseDragged:", rawptr(panel_mouse_dragged_callback), "v@:@") ||
+	   !panel_add_method(view_class, "mouseMoved:", rawptr(panel_mouse_moved_callback), "v@:@") {
 		return false
 	}
 	NS.objc_registerClassPair(view_class)
@@ -263,6 +272,10 @@ panel_window_hide :: proc() {
 	if panel_window.animating && !panel_window.opening {
 		return // already closing
 	}
+	settings_close()
+	panel_window.pointer_valid = false
+	panel_window.pointer_down = false
+	panel_window.click_pending = false
 	panel_window.opening = false
 	panel_window.animating = true
 	panel_window.has_time = false
@@ -331,14 +344,60 @@ panel_scroll_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
 	panel_window_begin_scrolling()
 }
 
+// panel_pointer_update converts an event location into clay coordinates
+// (top-left origin) and redraws.
+panel_pointer_update :: proc(event: ^NS.Event, down: bool) {
+	view := panel_window.view
+	if view == nil {
+		return
+	}
+	in_window := event->locationInWindow()
+	in_view := view->convertPointFromView(in_window, nil)
+	panel_window.pointer = {f32(in_view.x), f32(panel.height-f32(in_view.y))}
+	panel_window.pointer_valid = true
+	panel_window.pointer_down = down
+	panel_mark_dirty()
+}
+
+panel_mouse_down_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
+	context = runtime.default_context()
+	panel_pointer_update(event, true)
+}
+
+panel_mouse_up_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
+	context = runtime.default_context()
+	panel_pointer_update(event, false)
+	panel_window.click_pending = true
+	panel_mark_dirty()
+}
+
+panel_mouse_dragged_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
+	context = runtime.default_context()
+	panel_pointer_update(event, true)
+}
+
+panel_mouse_moved_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
+	context = runtime.default_context()
+	panel_pointer_update(event, panel_window.pointer_down)
+}
+
 panel_key_callback :: proc "c" (self: NS.id, cmd: NS.SEL, event: ^NS.Event) {
 	context = runtime.default_context()
+	if settings_key(event) {
+		return
+	}
 	if event->keyCode() == NSEVENT_KEY_ESCAPE {
 		panel_window_hide()
 	}
 }
 
 panel_accepts_first_responder :: proc "c" (self: NS.id, cmd: NS.SEL) -> bool {
+	return true
+}
+
+// acceptsFirstMouse keeps the panel's first click when the app is not the
+// active one: without it macOS swallows the click that would focus the window.
+panel_accepts_first_mouse :: proc "c" (self: NS.id, cmd: NS.SEL, event: NS.id) -> bool {
 	return true
 }
 
