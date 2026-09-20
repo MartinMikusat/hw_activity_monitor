@@ -195,17 +195,14 @@ panel_name_chars :: proc(stats: Stat_Selection) -> int {
 }
 
 // panel_rank_background tints the top of the ranking: red for the first place,
-// yellow for the next three. Process rows use the same colors at half strength
-// so the group highlight stays the loudest thing on the panel.
+// yellow for the next three, on group rows only. Process rows stay uncolored —
+// their rank number carries the highlight instead, so the group tint remains
+// the loudest thing on the panel.
 panel_rank_background :: proc(row: Ui_Row, palette: Panel_Palette) -> hw_clay.Color {
-	if row.rank <= 0 {
+	if row.kind != .Group || row.rank <= 0 {
 		return {}
 	}
-	color := row.rank == 1 ? palette.rank_red : row.rank <= 4 ? palette.rank_yellow : hw_clay.Color{}
-	if row.kind == .Process && color.a > 0 {
-		color.a /= 2
-	}
-	return color
+	return row.rank == 1 ? palette.rank_red : row.rank <= 4 ? palette.rank_yellow : hw_clay.Color{}
 }
 
 panel_rank_text_color :: proc(row: Ui_Row, palette: Panel_Palette) -> hw_clay.Color {
