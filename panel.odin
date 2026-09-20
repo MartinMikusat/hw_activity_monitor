@@ -120,13 +120,8 @@ Panel :: struct {
 	// Geometry.
 	width:  f32,
 	height: f32,
-	// Animation progress (0 hidden, 1 settled) with its pivot and start offset,
-	// set by panel_window.odin.
-	progress: f32,
-	anchor:   [2]f32,
-	from:     [2]f32,
 	// Pending wheel delta for the next frame, and a dirty flag for redraws that
-	// happen outside the animation clock.
+	// happen outside the display link.
 	scroll_delta: [2]f32,
 	draw_dirty:   bool,
 	// True while panel_draw runs: state changes made by a click handler must
@@ -137,9 +132,6 @@ Panel :: struct {
 }
 
 panel: Panel
-
-// Temporary diagnostic: whether the last encoded frame showed the settings modal.
-panel_diag_drew_modal: bool
 
 panel_clay_error :: proc(data: hw_clay.Error_Data) {
 	fmt.eprintf("[panel] clay error: %v: %s\n", data.error_type, data.error_text)
@@ -156,9 +148,6 @@ panel_setup_renderer :: proc(layer: ^QC.MetalLayer, device: ^MTL.Device, queue: 
 	panel.queue = queue
 	panel.width = PANEL_WIDTH
 	panel.height = PANEL_MIN_HEIGHT
-	panel.progress = 1
-	panel.anchor = {PANEL_WIDTH, PANEL_MIN_HEIGHT}
-	panel.from = {0, PANEL_TRANSLATE_START}
 
 	if !metal.renderer_init(&panel.gpu, rawptr(device), "", uint(MTL.PixelFormat.BGRA8Unorm), true) {
 		return false
@@ -392,7 +381,6 @@ panel_set_size :: proc(width, height: f32) {
 	panel.width = width
 	panel.height = height
 	panel.renderer.viewport_height = height
-	panel.anchor = {panel.anchor.x, height}
 	panel_window_set_frame(width, height)
 }
 
@@ -420,7 +408,7 @@ panel_sync_layer :: proc(width, height: f32) {
 // lets the window, view, and layer settle first. While a draw is in flight the
 // change is only flagged: the running draw picks it up.
 panel_mark_dirty :: proc() {
-	if panel.drawing || panel_window_is_animating() {
+	if panel.drawing {
 		panel.draw_dirty = true
 		return
 	}
@@ -504,13 +492,12 @@ panel_check_geometry :: proc(tag: string) {
 		drawable_height = drawable_height,
 	}
 	log_event(monitor.log, "panel_geometry", fmt.tprintf(
-		"\"tag\":%s,\"panel_height\":%.0f,\"window_height\":%.0f,\"drawable_height\":%.0f,\"visible\":%v,\"animating\":%v,\"settings\":%v",
+		"\"tag\":%s,\"panel_height\":%.0f,\"window_height\":%.0f,\"drawable_height\":%.0f,\"visible\":%v,\"settings\":%v",
 		log_string(tag),
 		panel.height,
 		window_height,
 		drawable_height,
 		panel_window.visible,
-		panel_window.animating,
 		settings.open,
 	))
 }
@@ -557,14 +544,6 @@ panel_draw :: proc() {
 	hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
 	commands := panel_build_tree(&panel.clay, rows, palette, panel_mode)
 
-	draw.push_opacity(&panel.list, panel_opacity(panel.progress))
-	draw.push_transform(&panel.list, panel_transform(
-		panel.progress,
-		panel.anchor.x,
-		panel.anchor.y,
-		panel.from.x,
-		panel.from.y,
-	))
 	hw_clay_ui.render_commands(&panel.renderer, commands)
 	if panel_mode == .Maximized {
 		panel_draw_charts(rows, palette)
@@ -573,8 +552,6 @@ panel_draw :: proc() {
 	} else {
 		panel_draw_sparklines(rows, palette)
 	}
-	draw.pop_transform(&panel.list)
-	draw.pop_opacity(&panel.list)
 
 	coretext.flush(&panel.text)
 
@@ -595,19 +572,6 @@ panel_draw :: proc() {
 	command_buffer->commit()
 	panel.draw_dirty = false
 	panel_check_geometry("draw")
-	// Temporary: record the frame that first shows or hides the modal, with the
-	// animation state it was drawn under.
-	modal := settings.open && panel_mode == .Popover
-	if modal != panel_diag_drew_modal {
-		panel_diag_drew_modal = modal
-		log_event(monitor.log, "panel_modal_draw", fmt.tprintf(
-			"\"open\":%v,\"progress\":%.3f,\"animating\":%v,\"height\":%.0f",
-			modal,
-			panel.progress,
-			panel_window.animating,
-			panel.height,
-		))
-	}
 }
 
 // panel_build_tree lays out the tree for the given mode.
@@ -1069,7 +1033,7 @@ panel_click :: proc(id: hw_clay.Element_Id) -> bool {
 // panel_handle_click resolves a mouse-up against the previous frame's layout,
 // which is what the user saw when they pressed.
 panel_handle_click :: proc() {
-	if !panel_window.visible || panel_window.animating {
+	if !panel_window.visible {
 		return
 	}
 	for id in hw_clay.get_pointer_over_ids(&panel.clay) {

@@ -7,8 +7,7 @@ reports runaway CPU and memory and never kills anything.
   remove with `./install.sh` / `./uninstall.sh`.
 - UI: `ui.odin` owns the status item and the snapshot model; `panel.odin` owns
   the clay layout and the draw call; `panel_window.odin` owns the NSPanel,
-  CAMetalLayer, input, and the display-link clock; `panel_animation.odin` is
-  the pure open/close math. The main thread only draws; `monitor_tick` runs on
+  CAMetalLayer, input, and the display-link clock. The main thread only draws; `monitor_tick` runs on
   a worker thread (main.odin), builds a `Ui_Snapshot`, and posts it with
   `dispatch_async_f` to the main queue, which frees the snapshot it replaced.
   Never sample or touch AppKit off the main thread; if `ui_start` fails,
@@ -20,8 +19,8 @@ reports runaway CPU and memory and never kills anything.
   blocks and the history survives. `monitor.config` and `monitor.policy` are
   worker-owned after startup. Panel mouse and key events feed clay's pointer
   state and the `text_input` editing state; clicks resolve against the previous
-  frame's element boxes, so the panel must be settled (visible, not animating)
-  for a click to count.
+  frame's element boxes, so the panel must be visible and settled for a click to
+  count.
 - Panel rows are ranked, not reordered, as data changes: `ui_build_rows` ranks
   groups and their processes by cumulative urgency (the larger of the windowed
   CPU share and the footprint share of their budgets) and stamps `key`, `pid`,
@@ -60,27 +59,26 @@ reports runaway CPU and memory and never kills anything.
   acquiring. `panel_mark_dirty` defers the draw to the next main-queue turn
   (coalesced) so it cannot race a window resize; while a draw is in flight it
   only sets `draw_dirty`, and pointer/click handling runs before the drawable is
-  acquired. The list fades and scales in and out; the settings modal does not
-  animate at all. It is drawn into the layer before the window is ordered in, so
-  its first composite already shows the modal, and dismissing it orders the
-  window out and closes settings in the same turn.
+  acquired. The panel does not animate: it appears and disappears at once, and
+  `setAnimationBehavior:` is None so AppKit cannot animate the window either. On
+  show, the layer is filled before the window is ordered in and drawn again
+  right after, because an off-screen layer may refuse a drawable; on hide the
+  window is ordered out in the same turn and settings close with it.
   `panel_check_geometry` logs a `panel_geometry` event when the window or
   drawable height disagrees with the layout height: that mismatch is the
   signature of a stale frame, and the event keeps the numbers for next time.
 - The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
   Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
-  reintroduce AppKit view hierarchies for the panel content: layout, text,
-  scrolling, and the animation all run through the draw list. Push opacity and
-  transform around `render_commands` (draw.push_opacity/push_transform). The
-  display link stays paused unless animating or a scroll is settling.
+  reintroduce AppKit view hierarchies for the panel content: layout, text, and
+  scrolling all run through the draw list. The display link stays paused unless
+  a scroll is settling.
 - This panel is the reference implementation for the global Odin rule "own the
   stack: native frameworks are a last resort" (`.agents/skills/odin/SKILL.md`).
 - `core:thread.create` returns a *suspended* thread: always follow it with
   `thread.start`; a second argument to `create` is the priority, not user data.
 - Panel rows come from `ui_build_rows` (ui.odin), which is pure apart from its
   allocator and covered by `ui_test.odin`. Only rows cut by the per-group limit
-  get a "… and N more" note. `panel_animation_test.odin` covers the curve and
-  transform.
+  get a "… and N more" note.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the

@@ -2,8 +2,8 @@
 // a bare CAMetalLayer. All pixels come from panel.odin; this file only owns the
 // surface, the input events, and the open/close clock.
 //
-// The display link stays paused unless the panel is animating or a scroll is
-// still settling, so an idle panel costs nothing.
+// The display link stays paused unless a scroll is still settling, so an idle
+// panel costs nothing.
 
 package activity_monitor
 
@@ -32,9 +32,6 @@ Panel_Window :: struct {
 	controller:    ^NS.Object,
 	display_link:  macos.Display_Link,
 	visible:       bool,
-	animating:     bool,
-	opening:       bool,
-	progress:      f32,
 	last_time:     f64,
 	has_time:      bool,
 	scroll_until:  f64,
@@ -116,6 +113,9 @@ panel_window_init :: proc() -> bool {
 	msg_void_bool(window, sel_registerName("setHasShadow:"), false)
 	msg_void_bool(window, sel_registerName("setMovable:"), false)
 	msg_void_bool(window, sel_registerName("setReleasedWhenClosed:"), false)
+	// NSWindowAnimationBehaviorNone: AppKit must not animate the panel's
+	// appearance or frame changes. The panel appears and disappears at once.
+	msg_void_i(window, sel_registerName("setAnimationBehavior:"), 2)
 	msg_void_i(window, sel_registerName("setLevel:"), PANEL_WINDOW_LEVEL_STATUS)
 	msg_void_i(
 		window,
@@ -231,7 +231,6 @@ panel_window_position :: proc() {
 		x := visible_min_x + (f64(visible.size.width) - width) / 2
 		y := visible_min_y + (f64(visible.size.height) - height) / 2
 		window->setFrame(panel_ns(x, y, width, height), false)
-		panel.anchor = {panel.width / 2, panel.height}
 		panel_sync_layer(panel.width, panel.height)
 		return
 	}
@@ -243,9 +242,6 @@ panel_window_position :: proc() {
 		y = f64(button_rect.origin.y + button_rect.size.height) + PANEL_ANCHOR_GAP
 	}
 	window->setFrame(panel_ns(x, y, width, height), false)
-	// The pivot sits on the panel's top edge under the icon, in draw list
-	// coordinates (bottom-left origin).
-	panel.anchor = {f32(center_x - x), panel.height}
 	// Keep the layer in step with the window: the next draw must not be the
 	// thing that fixes the surface size.
 	panel_sync_layer(panel.width, panel.height)
@@ -261,9 +257,10 @@ panel_window_toggle :: proc() {
 	panel_window_show()
 }
 
-// panel_window_show orders the panel in. The list fades and scales in under the
-// icon; the settings modal appears at once, with no fade or scale, because it is
-// a utility view rather than the panel's own appearance.
+// panel_window_show orders the panel in. It appears at once: no fade, no scale,
+// no AppKit animation. The layer is filled before the window is on screen, so
+// the first composite already has the content in it, and drawn again after
+// ordering in, when a drawable is certain to be available.
 panel_window_show :: proc() {
 	window := panel_window.window
 	if window == nil {
@@ -274,82 +271,32 @@ panel_window_show :: proc() {
 	ui_sort_now()
 	panel_window_position()
 	panel_window.visible = true
-	panel_window.opening = true
-	if settings.open {
-		// The settings modal appears at once: no fade, no scale. Draw before the
-		// window is on screen so its first composite already has the modal in
-		// it, then draw again after ordering in, when a drawable is certain to
-		// be available.
-		panel.progress = 1
-		panel_window.progress = 1
-		panel_window.animating = false
-		panel_draw()
-	} else {
-		panel.progress = 0
-		panel_window.progress = 0
-		panel_window.animating = true
-	}
 	panel_window.has_time = false
+	panel_draw()
 	msg_void0(window, sel_registerName("makeKeyAndOrderFront:"))
-	if settings.open {
-		panel_draw()
-	}
-	log_event(monitor.log, "panel_show", fmt.tprintf(
-		"\"instant\":%v,\"settings\":%v,\"progress\":%.3f",
-		!panel_window.animating,
-		settings.open,
-		panel.progress,
-	))
+	panel_draw()
 	if panel_window.view != nil {
 		_ = window->makeFirstResponder((^NS.Responder)(panel_window.view))
-	}
-	if panel_window.animating {
-		macos.display_link_set_paused(&panel_window.display_link, false)
 	}
 	panel_check_geometry("show")
 }
 
-// panel_window_hide closes the panel. The list fades and scales out; the settings
-// modal goes at once, so dismissing it is not an animation.
+// panel_window_hide closes the panel at once: no fade, no scale. Settings close
+// with the window, so the next open starts on the list.
 panel_window_hide :: proc() {
 	if !panel_window.visible {
 		return
 	}
-	if panel_window.animating && !panel_window.opening {
-		return // already closing
-	}
 	panel_window.pointer_valid = false
 	panel_window.pointer_down = false
 	panel_window.click_pending = false
-	panel_window.opening = false
 	panel_window.has_time = false
+	panel_window.visible = false
+	msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
 	if settings.open {
-		// Order out immediately: no fade, no scale, and no modal left behind.
-		panel_window.animating = false
-		panel_window.visible = false
-		panel.progress = 0
-		panel_window.progress = 0
-		msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
 		settings_close()
-		log_event(monitor.log, "panel_hide", "\"instant\":true,\"settings\":true")
-		panel_check_geometry("hide")
-		return
 	}
-	panel_window.animating = true
-	log_event(monitor.log, "panel_hide", "\"instant\":false,\"settings\":false")
-	macos.display_link_set_paused(&panel_window.display_link, false)
 	panel_check_geometry("hide")
-}
-
-// panel_window_begin_animation unpauses the display link so an animation, fade,
-// or scroll can settle.
-panel_window_begin_animation :: proc() {
-	panel_window.has_time = false
-	macos.display_link_set_paused(&panel_window.display_link, false)
-}
-
-panel_window_is_animating :: proc() -> bool {
-	return panel_window.animating
 }
 
 panel_window_begin_scrolling :: proc() {
@@ -357,8 +304,8 @@ panel_window_begin_scrolling :: proc() {
 	macos.display_link_set_paused(&panel_window.display_link, false)
 }
 
-// panel_tick advances the animation and redraws; it runs only while the display
-// link is unpaused.
+// panel_tick advances a settling scroll and redraws; it runs only while the
+// display link is unpaused.
 panel_tick :: proc(timestamp: f64) {
 	delta: f64
 	if panel_window.has_time && timestamp > panel_window.last_time {
@@ -367,26 +314,9 @@ panel_tick :: proc(timestamp: f64) {
 	panel_window.last_time = timestamp
 	panel_window.has_time = true
 
-	if panel_window.animating {
-		if panel_window.opening {
-			panel_window.progress = min(panel_window.progress + f32(delta) / PANEL_OPEN_SECONDS, 1)
-			if panel_window.progress >= 1 {
-				panel_window.animating = false
-			}
-		} else {
-			panel_window.progress = max(panel_window.progress - f32(delta) / PANEL_CLOSE_SECONDS, 0)
-			if panel_window.progress <= 0 {
-				panel_window.animating = false
-				panel_window.visible = false
-				msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
-			}
-		}
-		panel.progress = panel_window.progress
-	}
-
 	panel_draw()
 
-	if !panel_window.animating && timestamp >= panel_window.scroll_until {
+	if timestamp >= panel_window.scroll_until {
 		macos.display_link_set_paused(&panel_window.display_link, true)
 	}
 }
@@ -484,7 +414,7 @@ panel_can_become_key :: proc "c" (self: NS.id, cmd: NS.SEL) -> bool {
 
 panel_window_did_resign_key :: proc "c" (self: NS.id, cmd: NS.SEL, notification: NS.id) {
 	context = runtime.default_context()
-	if !panel_window.visible || panel_window.animating {
+	if !panel_window.visible {
 		return
 	}
 	panel_window_hide()
