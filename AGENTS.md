@@ -22,6 +22,15 @@ reports runaway CPU and memory and never kills anything.
   state and the `text_input` editing state; clicks resolve against the previous
   frame's element boxes, so the panel must be settled (visible, not animating)
   for a click to count.
+- Panel rows are ranked, not reordered, as data changes: `ui_build_rows` ranks
+  groups and their processes by cumulative urgency (the larger of the windowed
+  CPU share and the footprint share of their budgets) and stamps `key`, `pid`,
+  and `rank` on every row. The display order is main-thread state
+  (`Panel_Order` in ui.odin): `ui_order_rows` rewrites each snapshot into that
+  order, appending new groups at the bottom and dropping names that have been
+  absent past the history window, and `ui_sort_now` (the Sort button) adopts
+  the rank order. Never sort rows in the worker: the list must not move without
+  the operator asking.
 - The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
   one place AppKit owns content because the status item is AppKit's). Its Quit
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart

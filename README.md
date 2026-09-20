@@ -43,12 +43,19 @@ asks for notification permission; without it alerts only reach the log.
 
 The status item shows the sampled total CPU as a share of all cores ("12%").
 Clicking it opens the panel: total CPU and process count, then the top groups
-ordered by CPU with their busiest processes underneath, each row carrying
-"CPU · memory" and pids. A group stays listed while it is above the CPU floor
-or above a 1 GB footprint, so a memory-heavy but idle process is still visible.
-Group rows also carry the rolling window's average CPU, its signed memory
-change, and a sparkline of the CPU series, so slow leaks and ramps are visible.
-The panel sizes itself to the list, up to a maximum height, then scrolls.
+with their busiest processes underneath, each row carrying "CPU · memory" and
+pids. A group stays listed while it is above the CPU floor or above a 1 GB
+footprint, so a memory-heavy but idle process is still visible. Group rows also
+carry the rolling window's average CPU, its signed memory change, and a
+sparkline of the CPU series, so slow leaks and ramps are visible.
+
+Rows stay where they are: every row carries its rank, computed from the
+cumulative window (the larger of its share of the CPU budget and its share of
+the memory budget), so from tick to tick only the rank numbers and values
+change. Rank 1 is tinted red, ranks 2–4 yellow. **Sort** in the panel header
+reorders the rows so their positions match their ranks; until you press it, the
+order from the last sort is kept and new groups are appended at the bottom. The
+panel sizes itself to the list, up to a maximum height, then scrolls.
 
 The **Settings** button in the panel header opens an in-panel modal that edits
 the history window, the sampling interval, and which of the four stat columns

@@ -10,6 +10,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:slice"
 import "core:strings"
+import "core:time"
 import "core:unicode/utf8"
 
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
@@ -27,6 +28,9 @@ Ui_Row_Kind :: enum {
 
 Ui_Row :: struct {
 	kind:          Ui_Row_Kind,
+	key:           string, // group name; empty on header rows
+	pid:           i32,    // process rows only
+	rank:          int,    // 1-based: group rank, or rank inside its group
 	name:          string,
 	cpu:           string, // stat columns, empty on header and note rows
 	memory:        string,
@@ -120,6 +124,35 @@ sort_by_cpu :: proc(samples: []Process_Sample) {
 	})
 }
 
+// ui_group_urgency ranks what is consuming the most of its budget over the
+// history window: the larger of the windowed CPU share and the footprint share.
+// A disabled memory budget leaves the CPU share. Ranks drive the panel's index
+// numbers and highlights, not the alerts.
+ui_group_urgency :: proc(cpu_avg: f64, memory_bytes: u64, config: Config) -> f64 {
+	cpu_share := config.cpu_percent > 0 ? cpu_avg / config.cpu_percent : 0
+	memory_share: f64
+	if config.memory_mb > 0 {
+		memory_share = f64(memory_bytes) / (config.memory_mb * f64(1 << 20))
+	}
+	return max(cpu_share, memory_share)
+}
+
+// ui_process_urgency is the same measure for one process, from its current
+// values because history is kept per group.
+ui_process_urgency :: proc(sample: Process_Sample, config: Config) -> f64 {
+	return ui_group_urgency(sample.cpu_fraction * 100, sample.memory_bytes, config)
+}
+
+Ranked_Group :: struct {
+	group:   Group_Sample,
+	urgency: f64,
+}
+
+Ranked_Process :: struct {
+	sample:  Process_Sample,
+	urgency: f64,
+}
+
 // Ui_Build_Options carries what the row builder needs beyond the samples.
 Ui_Build_Options :: struct {
 	total_percent: f64,
@@ -166,13 +199,35 @@ ui_build_rows :: proc(
 		trend_by_name[trend.name] = index
 	}
 
+	// Groups are ranked by cumulative urgency, not the instant CPU order the
+	// worker passes in, so the index numbers and highlights reflect the window.
+	ranked := make([dynamic]Ranked_Group, 0, len(groups), context.temp_allocator)
+	defer delete(ranked)
+	for group in groups {
+		cpu_avg := group.cpu_percent
+		if trend_index, found := trend_by_name[group.name]; found {
+			cpu_avg = trends[trend_index].cpu_avg
+		}
+		append(&ranked, Ranked_Group{
+			group   = group,
+			urgency = ui_group_urgency(cpu_avg, group.memory_bytes, options.config),
+		})
+	}
+	slice.sort_by(ranked[:], proc(a, b: Ranked_Group) -> bool {
+		if a.urgency != b.urgency {
+			return a.urgency > b.urgency
+		}
+		return a.group.name < b.group.name
+	})
+
 	name_chars := panel_name_chars(stats)
 	group_count := 0
-	for group in groups {
+	for entry in ranked {
+		group := entry.group
 		cpu_active := group.cpu_percent >= UI_GROUP_MIN_PERCENT
 		memory_active := group.memory_bytes >= u64(UI_GROUP_MEMORY_MIN_MB) * (1 << 20)
 		if !cpu_active && !memory_active {
-			continue // groups are sorted by CPU, so a memory-heavy group can be anywhere
+			continue
 		}
 		if group_count >= UI_GROUP_LIMIT {
 			break
@@ -182,6 +237,8 @@ ui_build_rows :: proc(
 		group_suffix := fmt.tprintf(" ×%d", group.count)
 		row := Ui_Row{
 			kind = .Group,
+			key  = strings.clone(group.name, allocator),
+			rank = group_count,
 			name = fmt.aprintf(
 				"%s%s",
 				ui_elide(
@@ -220,30 +277,43 @@ ui_build_rows :: proc(
 		}
 		append(&rows, row)
 
-		members := make([dynamic]Process_Sample, 0, len(group.pids), context.temp_allocator)
-		defer delete(members)
+		// Processes are ranked by their current urgency inside the group; the
+		// group's history is the only cumulative record kept.
+		ranked_members := make([dynamic]Ranked_Process, 0, len(group.pids), context.temp_allocator)
+		defer delete(ranked_members)
 		for pid in group.pids {
 			if sample, found := by_pid[pid]; found {
-				append(&members, sample)
+				append(&ranked_members, Ranked_Process{
+					sample  = sample,
+					urgency = ui_process_urgency(sample, options.config),
+				})
 			}
 		}
-		sort_by_cpu(members[:])
+		slice.sort_by(ranked_members[:], proc(a, b: Ranked_Process) -> bool {
+			if a.urgency != b.urgency {
+				return a.urgency > b.urgency
+			}
+			return a.sample.pid < b.sample.pid
+		})
 
-		eligible := make([dynamic]Process_Sample, 0, len(members), context.temp_allocator)
+		eligible := make([dynamic]Process_Sample, 0, len(ranked_members), context.temp_allocator)
 		defer delete(eligible)
-		for member in members {
-			cpu_member := member.cpu_fraction * 100 >= UI_PROCESS_MIN_PERCENT
-			memory_member := member.memory_bytes >= u64(UI_PROCESS_MEMORY_MIN_MB) * (1 << 20)
+		for member in ranked_members {
+			cpu_member := member.sample.cpu_fraction * 100 >= UI_PROCESS_MIN_PERCENT
+			memory_member := member.sample.memory_bytes >= u64(UI_PROCESS_MEMORY_MIN_MB) * (1 << 20)
 			if !cpu_member && !memory_member {
 				continue
 			}
-			append(&eligible, member)
+			append(&eligible, member.sample)
 		}
 		shown := min(len(eligible), UI_PROCESS_LIMIT_PER_GROUP)
-		for member in eligible[:shown] {
+		for member, index in eligible[:shown] {
 			process_suffix := fmt.tprintf(" · %d", member.pid)
 			process_row := Ui_Row{
 				kind = .Process,
+				key  = strings.clone(group.name, allocator),
+				pid  = member.pid,
+				rank = index + 1,
 				name = fmt.aprintf(
 					"    %s%s",
 					ui_elide(
@@ -266,6 +336,7 @@ ui_build_rows :: proc(
 		if hidden := len(eligible) - shown; hidden > 0 {
 			append(&rows, Ui_Row{
 				kind = .Note,
+				key  = strings.clone(group.name, allocator),
 				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
 			})
 		}
@@ -275,6 +346,208 @@ ui_build_rows :: proc(
 		append(&rows, Ui_Row{kind = .Note, name = fmt.aprintf("All quiet", allocator = allocator)})
 	}
 	return rows[:]
+}
+
+// -------------------------------------------------------------- row order
+
+// Panel_Group_Order is one group's place in the panel: the group name and the
+// pid order of its process rows. The strings and pid lists are owned.
+Panel_Group_Order :: struct {
+	name:    string,
+	pids:    [dynamic]i32,
+	present: bool,      // true while the group is in the snapshot
+	absent:  time.Tick, // when the group last went missing
+}
+
+// Panel_Order is the panel's stable row order. It survives snapshots, so rows
+// only move when the operator presses Sort; between sorts only the rank numbers
+// and values change.
+Panel_Order :: struct {
+	groups: [dynamic]Panel_Group_Order,
+}
+
+panel_order: Panel_Order
+
+ui_order_destroy :: proc(order: ^Panel_Order) {
+	assert(order != nil, "order required")
+	for &entry in order.groups {
+		delete(entry.name, context.allocator)
+		delete(entry.pids)
+	}
+	delete(order.groups)
+	order.groups = nil
+}
+
+ui_order_find :: proc(order: ^Panel_Order, name: string) -> int {
+	for &entry, index in order.groups {
+		if entry.name == name {
+			return index
+		}
+	}
+	return -1
+}
+
+// ui_order_adopt rebuilds the order from the ranks carried by the rows: group
+// rows are visited in row order (the builder emits them in rank order) and each
+// group's pids follow their process rows. This is the Sort button's action.
+ui_order_adopt :: proc(order: ^Panel_Order, rows: []Ui_Row) {
+	assert(order != nil, "order required")
+	ui_order_destroy(order)
+	for row in rows {
+		if row.kind != .Group {
+			continue
+		}
+		entry := Panel_Group_Order{name = strings.clone(row.key), present = true}
+		for candidate in rows {
+			if candidate.kind == .Process && candidate.key == row.key {
+				append(&entry.pids, candidate.pid)
+			}
+		}
+		append(&order.groups, entry)
+	}
+}
+
+// ui_order_append_block appends one group's rows: the group row, its process
+// rows in the stored pid order (new pids appended in row order), then the note.
+ui_order_append_block :: proc(ordered: ^[dynamic]Ui_Row, rows: []Ui_Row, entry: ^Panel_Group_Order) {
+	for row in rows {
+		if row.kind == .Group && row.key == entry.name {
+			append(ordered, row)
+			break
+		}
+	}
+	for pid in entry.pids {
+		for row in rows {
+			if row.kind == .Process && row.key == entry.name && row.pid == pid {
+				append(ordered, row)
+				break
+			}
+		}
+	}
+	for row in rows {
+		if row.kind != .Process || row.key != entry.name {
+			continue
+		}
+		known := false
+		for pid in entry.pids {
+			if pid == row.pid {
+				known = true
+				break
+			}
+		}
+		if !known {
+			append(&entry.pids, row.pid)
+			append(ordered, row)
+		}
+	}
+	for row in rows {
+		if row.kind == .Note && row.key == entry.name {
+			append(ordered, row)
+		}
+	}
+}
+
+// ui_order_rows returns the rows in the panel's stable order: the header first,
+// then each group block in stored order, with groups that appear for the first
+// time appended at the end. A group missing from the snapshot keeps its place
+// until it has been absent longer than the grace period, so a momentary gap
+// does not reshuffle the list.
+ui_order_rows :: proc(
+	order: ^Panel_Order,
+	rows: []Ui_Row,
+	now: time.Tick,
+	grace: time.Duration,
+	allocator := context.temp_allocator,
+) -> []Ui_Row {
+	assert(order != nil, "order required")
+	ordered := make([dynamic]Ui_Row, 0, len(rows), allocator)
+
+	for row in rows {
+		if row.kind == .Header {
+			append(&ordered, row)
+		}
+	}
+
+	for &entry in order.groups {
+		present := false
+		for row in rows {
+			if row.kind == .Group && row.key == entry.name {
+				present = true
+				break
+			}
+		}
+		if !present {
+			if entry.present {
+				entry.present = false
+				entry.absent = now
+			}
+			continue
+		}
+		entry.present = true
+		ui_order_append_block(&ordered, rows, &entry)
+	}
+
+	for row in rows {
+		if row.kind != .Group || ui_order_find(order, row.key) != -1 {
+			continue
+		}
+		entry := Panel_Group_Order{name = strings.clone(row.key), present = true}
+		append(&order.groups, entry)
+		ui_order_append_block(&ordered, rows, &order.groups[len(order.groups)-1])
+	}
+
+	// Standalone notes ("All quiet") belong to no group and keep their place at
+	// the end of the list.
+	for row in rows {
+		if row.kind == .Note && row.key == "" {
+			append(&ordered, row)
+		}
+	}
+
+	stale := make([dynamic]int, 0, len(order.groups), context.temp_allocator)
+	for &entry, index in order.groups {
+		if entry.present {
+			continue
+		}
+		if time.tick_diff(entry.absent, now) > grace {
+			append(&stale, index)
+		}
+	}
+	for index := len(stale) - 1; index >= 0; index -= 1 {
+		entry := &order.groups[stale[index]]
+		delete(entry.name, context.allocator)
+		delete(entry.pids)
+		ordered_remove(&order.groups, stale[index])
+	}
+	delete(stale)
+	return ordered[:]
+}
+
+// ui_snapshot_reorder rewrites the snapshot's rows into the panel's stable
+// order. Main thread only.
+ui_snapshot_reorder :: proc(snapshot: ^Ui_Snapshot) {
+	grace := time.Duration(snapshot.config.window_seconds * f64(time.Second))
+	rows := ui_order_rows(
+		&panel_order,
+		snapshot.rows,
+		time.tick_now(),
+		grace,
+		snapshot.allocator,
+	)
+	delete(snapshot.rows, snapshot.allocator)
+	snapshot.rows = rows
+}
+
+// ui_sort_now makes the panel's order match the ranks: the Sort button's
+// action. The current snapshot is re-ordered immediately; later snapshots
+// arrive already ranked and are re-ordered into the same stable order.
+ui_sort_now :: proc() {
+	snapshot := ui_state.snapshot
+	if snapshot == nil {
+		return
+	}
+	ui_order_adopt(&panel_order, snapshot.rows)
+	ui_snapshot_reorder(snapshot)
 }
 
 // --------------------------------------------------------------------- app
@@ -386,6 +659,7 @@ ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 			nsstring(fmt.tprintf("%.0f%%", snapshot.total_percent)),
 		)
 	}
+	ui_snapshot_reorder(snapshot)
 	previous := ui_state.snapshot
 	ui_state.snapshot = snapshot
 	if !ui_snapshot_applied {
@@ -400,6 +674,9 @@ ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 
 ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 	for row in snapshot.rows {
+		if row.key != "" {
+			delete(row.key, snapshot.allocator)
+		}
 		if row.name != "" {
 			delete(row.name, snapshot.allocator)
 		}

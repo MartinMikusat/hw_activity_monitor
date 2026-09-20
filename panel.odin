@@ -35,6 +35,8 @@ PANEL_STAT_MEMORY_WIDTH :: f32(66)
 PANEL_STAT_WINDOW_CPU_WIDTH :: f32(58)
 PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(78)
 PANEL_SPARK_WIDTH :: f32(72)
+// The rank column holds the index number every row carries.
+PANEL_RANK_WIDTH :: f32(26)
 PANEL_PADDING_HORIZONTAL :: u16(6)
 PANEL_PADDING_VERTICAL :: u16(6)
 PANEL_CORNER_RADIUS :: f32(10)
@@ -60,6 +62,12 @@ Panel_Palette :: struct {
 	field:       hw_clay.Color,
 	field_focus: hw_clay.Color,
 	error:       hw_clay.Color,
+	// Rank highlights: the row background and the index color for the top
+	// consumer (red) and the next three (yellow).
+	rank_red:        hw_clay.Color,
+	rank_red_text:   hw_clay.Color,
+	rank_yellow:     hw_clay.Color,
+	rank_yellow_text: hw_clay.Color,
 }
 
 Panel :: struct {
@@ -161,7 +169,7 @@ panel_stats :: proc() -> Stat_Selection {
 // character is reserved as a margin so a label that exactly fills the column is
 // never cut by the clip.
 panel_name_chars :: proc(stats: Stat_Selection) -> int {
-	fixed: f32
+	fixed := PANEL_RANK_WIDTH
 	columns := 0
 	if stats.cpu {
 		fixed += PANEL_STAT_CPU_WIDTH
@@ -179,8 +187,36 @@ panel_name_chars :: proc(stats: Stat_Selection) -> int {
 		fixed += PANEL_STAT_WINDOW_MEMORY_WIDTH
 		columns += 1
 	}
-	width := f32(PANEL_WIDTH-PANEL_PADDING_HORIZONTAL*2) - fixed - f32(columns*8)
+	// The rank cell and the name share the row with the stat columns, so there
+	// is one more gap than stat columns.
+	gaps := f32((columns + 1) * 8)
+	width := f32(PANEL_WIDTH-PANEL_PADDING_HORIZONTAL*2) - fixed - gaps
 	return int(width / (f32(PANEL_FONT_SIZE) * 0.5)) - 1
+}
+
+// panel_rank_background tints the top of the ranking: red for the first place,
+// yellow for the next three. Process rows use the same colors at half strength
+// so the group highlight stays the loudest thing on the panel.
+panel_rank_background :: proc(row: Ui_Row, palette: Panel_Palette) -> hw_clay.Color {
+	if row.rank <= 0 {
+		return {}
+	}
+	color := row.rank == 1 ? palette.rank_red : row.rank <= 4 ? palette.rank_yellow : hw_clay.Color{}
+	if row.kind == .Process && color.a > 0 {
+		color.a /= 2
+	}
+	return color
+}
+
+panel_rank_text_color :: proc(row: Ui_Row, palette: Panel_Palette) -> hw_clay.Color {
+	switch row.rank {
+	case 1:
+		return palette.rank_red_text
+	case 2, 3, 4:
+		return palette.rank_yellow_text
+	case:
+		return palette.secondary
+	}
 }
 
 // panel_draw_sparklines draws each group's windowed CPU series as a polyline
@@ -501,19 +537,32 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 				child_alignment = {y = .Center},
 				child_gap       = 8,
 			},
+			background_color = panel_rank_background(row, palette),
 		})
 
 		font, color := panel_row_style(row, palette)
-		// The name grows so the stats sit against the panel's right padding.
-		// Every row pushes the same enabled columns, empty where a row has no
-		// value, so the table stays aligned vertically. The header spans the
-		// full width because it has no stats; it carries the settings button.
-		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+		// The header spans the full width and carries the panel buttons; data
+		// rows start with the rank cell, then the growing name. Every row pushes
+		// the same enabled columns, empty where a row has no value, so the table
+		// stays aligned vertically.
 		if row.kind == .Header {
+			panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+			panel_push_button(ctx, hw_clay.id("panel-sort"), "Sort", palette)
 			panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
 			hw_clay.pop_element(ctx)
 			continue
 		}
+		rank_text := row.rank > 0 ? fmt.tprintf("%d", row.rank) : ""
+		rank_font := row.rank > 0 && row.rank <= 4 ? FONT_BOLD : font
+		panel_push_text(
+			ctx,
+			rank_text,
+			rank_font,
+			panel_rank_text_color(row, palette),
+			{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
 		if stats.cpu {
 			panel_push_text(
 				ctx,
@@ -837,6 +886,11 @@ panel_handle_click :: proc() {
 			settings_open()
 			return
 		}
+		if id == hw_clay.id("panel-sort") {
+			ui_sort_now()
+			panel_mark_dirty()
+			return
+		}
 	}
 }
 
@@ -878,6 +932,10 @@ panel_palette :: proc() -> Panel_Palette {
 			field       = {40, 40, 44, 255},
 			field_focus = {56, 56, 62, 255},
 			error       = {235, 118, 118, 255},
+			rank_red        = {225, 70, 70, 54},
+			rank_red_text   = {255, 138, 138, 255},
+			rank_yellow     = {225, 180, 70, 46},
+			rank_yellow_text = {248, 208, 120, 255},
 		}
 	}
 	return {
@@ -888,6 +946,10 @@ panel_palette :: proc() -> Panel_Palette {
 		field       = {236, 236, 240, 255},
 		field_focus = {224, 224, 230, 255},
 		error       = {190, 60, 60, 255},
+		rank_red        = {220, 60, 60, 46},
+		rank_red_text   = {186, 32, 32, 255},
+		rank_yellow     = {226, 176, 50, 52},
+		rank_yellow_text = {150, 112, 10, 255},
 	}
 }
 

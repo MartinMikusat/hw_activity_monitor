@@ -31,10 +31,14 @@ test_ui_rows_group_then_processes :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[0].name, "27% of all cores · 498 processes")
 	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
 	testing.expect_value(t, rows[1].name, "hw_clay ×4")
+	testing.expect_value(t, rows[1].key, "hw_clay")
+	testing.expect_value(t, rows[1].rank, 1)
 	testing.expect_value(t, rows[1].cpu, "240%")
 	testing.expect_value(t, rows[1].memory, "1.50 GB")
 	testing.expect_value(t, rows[2].kind, Ui_Row_Kind.Process)
 	testing.expect_value(t, rows[2].name, "    hw_clay · 11")
+	testing.expect_value(t, rows[2].pid, i32(11))
+	testing.expect_value(t, rows[2].rank, 1)
 	testing.expect_value(t, rows[2].cpu, "90%")
 	testing.expect_value(t, rows[2].memory, "512.0 MB")
 	testing.expect_value(t, rows[3].cpu, "80%")
@@ -95,8 +99,8 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	samples := []Process_Sample{{pid = 5765, name = long, cpu_fraction = 0.2, memory_bytes = 4 << 30}}
 	groups := group_samples(samples)
 	rows := ui_build_rows(groups, samples, nil, test_options(5, 1), context.temp_allocator)
-	testing.expect_value(t, rows[1].name, "com.apple.Virtualizatio… ×1")
-	testing.expect_value(t, rows[2].name, "    com.apple.Virtu… · 5765")
+	testing.expect_value(t, rows[1].name, "com.apple.Virtual… ×1")
+	testing.expect_value(t, rows[2].name, "    com.apple… · 5765")
 }
 
 @(test)
@@ -109,16 +113,46 @@ test_ui_rows_include_memory_heavy_idle_group :: proc(t: ^testing.T) {
 	groups := group_samples(samples)
 	rows := ui_build_rows(groups, samples, nil, test_options(10, 2), context.temp_allocator)
 
+	// Combined urgency ranks the 8 GB group above the busy one.
 	testing.expect_value(t, len(rows), 5)
-	testing.expect_value(t, rows[1].name, "busy ×1")
+	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
+	testing.expect_value(t, rows[1].name, "leak ×1")
+	testing.expect_value(t, rows[1].rank, 1)
+	testing.expect_value(t, rows[1].cpu, "0.1%")
+	testing.expect_value(t, rows[1].memory, "8.00 GB")
+	testing.expect_value(t, rows[2].kind, Ui_Row_Kind.Process)
+	testing.expect_value(t, rows[2].name, "    leak · 2")
+	testing.expect_value(t, rows[2].rank, 1)
 	testing.expect_value(t, rows[3].kind, Ui_Row_Kind.Group)
-	testing.expect_value(t, rows[3].name, "leak ×1")
-	testing.expect_value(t, rows[3].cpu, "0.1%")
-	testing.expect_value(t, rows[3].memory, "8.00 GB")
-	testing.expect_value(t, rows[4].kind, Ui_Row_Kind.Process)
-	testing.expect_value(t, rows[4].name, "    leak · 2")
-	testing.expect_value(t, rows[4].cpu, "0.1%")
-	testing.expect_value(t, rows[4].memory, "8.00 GB")
+	testing.expect_value(t, rows[3].name, "busy ×1")
+	testing.expect_value(t, rows[3].rank, 2)
+	testing.expect_value(t, rows[4].name, "    busy · 1")
+}
+
+@(test)
+test_ui_rows_rank_by_cumulative_urgency :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	history: History
+	defer history_destroy(&history)
+	history.window = 600 * time.Second
+	history_append(&history, []Group_Sample{{name = "leak", cpu_percent = 1, memory_bytes = 8 << 30}}, tick_at(0))
+	history_append(&history, []Group_Sample{{name = "hog", cpu_percent = 50, memory_bytes = 100 << 20}}, tick_at(0))
+
+	samples := []Process_Sample{
+		{pid = 1, name = "leak", cpu_fraction = 0.01, memory_bytes = 8 << 30},
+		{pid = 2, name = "hog", cpu_fraction = 0.5, memory_bytes = 100 << 20},
+	}
+	groups := group_samples(samples)
+	trends := history_trends(&history, groups)
+	rows := ui_build_rows(groups, samples, trends, test_options(60, 2), context.temp_allocator)
+
+	// The leak's footprint is twice its budget; the hog uses 50 of 60 CPU.
+	testing.expect_value(t, rows[1].key, "leak")
+	testing.expect_value(t, rows[1].rank, 1)
+	testing.expect_value(t, rows[2].key, "leak")
+	testing.expect_value(t, rows[2].rank, 1)
+	testing.expect_value(t, rows[3].key, "hog")
+	testing.expect_value(t, rows[3].rank, 2)
 }
 
 @(test)
@@ -167,6 +201,100 @@ test_format_bytes_units :: proc(t: ^testing.T) {
 	testing.expect_value(t, format_bytes_delta(0), "0")
 	testing.expect_value(t, format_bytes_delta(2 << 30), "+2.00 GB")
 	testing.expect_value(t, format_bytes_delta(-(2 << 30)), "-2.00 GB")
+}
+
+@(test)
+test_ui_order_keeps_rows_in_place :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	order: Panel_Order
+	defer ui_order_destroy(&order)
+
+	first := []Ui_Row{
+		{kind = .Header, name = "header"},
+		{kind = .Group, key = "A", rank = 1, name = "A"},
+		{kind = .Process, key = "A", pid = 1, rank = 1, name = "a1"},
+		{kind = .Group, key = "B", rank = 2, name = "B"},
+		{kind = .Process, key = "B", pid = 2, rank = 1, name = "b1"},
+	}
+	ordered := ui_order_rows(&order, first, tick_at(0), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, len(ordered), 5)
+	testing.expect_value(t, ordered[1].key, "A")
+	testing.expect_value(t, ordered[3].key, "B")
+
+	// B now ranks first, but the rows stay where they are: only the rank and
+	// the values change.
+	second := []Ui_Row{
+		{kind = .Header, name = "header"},
+		{kind = .Group, key = "B", rank = 1, name = "B"},
+		{kind = .Process, key = "B", pid = 2, rank = 1, name = "b1"},
+		{kind = .Group, key = "A", rank = 2, name = "A"},
+		{kind = .Process, key = "A", pid = 1, rank = 1, name = "a1"},
+	}
+	ordered = ui_order_rows(&order, second, tick_at(5), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, ordered[1].key, "A")
+	testing.expect_value(t, ordered[1].rank, 2)
+	testing.expect_value(t, ordered[3].key, "B")
+	testing.expect_value(t, ordered[3].rank, 1)
+}
+
+@(test)
+test_ui_order_adopt_sorts_to_the_ranks :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	order: Panel_Order
+	defer ui_order_destroy(&order)
+
+	rows := []Ui_Row{
+		{kind = .Group, key = "B", rank = 1, name = "B"},
+		{kind = .Process, key = "B", pid = 2, rank = 1, name = "b1"},
+		{kind = .Group, key = "A", rank = 2, name = "A"},
+		{kind = .Process, key = "A", pid = 1, rank = 1, name = "a1"},
+	}
+	_ = ui_order_rows(&order, rows, tick_at(0), 600*time.Second, context.temp_allocator)
+	ui_order_adopt(&order, rows)
+	testing.expect_value(t, order.groups[0].name, "B")
+	testing.expect_value(t, order.groups[1].name, "A")
+	testing.expect_value(t, order.groups[0].pids[0], i32(2))
+}
+
+@(test)
+test_ui_order_appends_new_groups_and_prunes_stale :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	order: Panel_Order
+	defer ui_order_destroy(&order)
+
+	base := []Ui_Row{
+		{kind = .Group, key = "A", rank = 1, name = "A"},
+		{kind = .Group, key = "B", rank = 2, name = "B"},
+	}
+	_ = ui_order_rows(&order, base, tick_at(0), 600*time.Second, context.temp_allocator)
+
+	// A new group C appears: it is appended, so the existing rows do not move.
+	with_new := []Ui_Row{
+		{kind = .Group, key = "C", rank = 1, name = "C"},
+		{kind = .Group, key = "A", rank = 2, name = "A"},
+	}
+	ordered := ui_order_rows(&order, with_new, tick_at(10), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, ordered[0].key, "A")
+	testing.expect_value(t, ordered[1].key, "C")
+
+	// B stays missing past the grace period and is dropped.
+	_ = ui_order_rows(&order, with_new, tick_at(1200), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, ui_order_find(&order, "B"), -1)
+	testing.expect_value(t, len(order.groups), 2)
+}
+
+@(test)
+test_ui_order_keeps_standalone_notes :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	order: Panel_Order
+	defer ui_order_destroy(&order)
+	rows := []Ui_Row{
+		{kind = .Header, name = "header"},
+		{kind = .Note, name = "All quiet"},
+	}
+	ordered := ui_order_rows(&order, rows, tick_at(0), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, len(ordered), 2)
+	testing.expect_value(t, ordered[1].name, "All quiet")
 }
 
 @(test)
