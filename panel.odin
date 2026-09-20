@@ -509,7 +509,12 @@ panel_build_layout :: proc(
 		},
 		background_color = palette.background,
 		corner_radius    = hw_clay.corner_radius_all(PANEL_CORNER_RADIUS),
-		border           = {color = palette.border, width = hw_clay.border_all(1)},
+		// Only the outline: border_all would also set between_children, which
+		// draws separator lines between the settings rows.
+		border = {
+			color = palette.border,
+			width = {left = 1, right = 1, top = 1, bottom = 1},
+		},
 	})
 
 	if settings.open {

@@ -4,6 +4,10 @@ package activity_monitor
 
 import "core:testing"
 import "core:time"
+import draw "ui_framework:draw"
+import coretext "ui_framework:coretext"
+import hw_clay "hw_clay:."
+import hw_clay_ui "hw_clay:ui_framework"
 
 test_stats :: proc() -> Stat_Selection {
 	return {cpu = true, memory = true, window_cpu = true, window_memory = true}
@@ -304,6 +308,58 @@ test_ui_order_keeps_standalone_notes :: proc(t: ^testing.T) {
 	ordered := ui_order_rows(&order, rows, tick_at(0), 600*time.Second, context.temp_allocator)
 	testing.expect_value(t, len(ordered), 2)
 	testing.expect_value(t, ordered[1].name, "All quiet")
+}
+
+// The settings modal must stay flat: the panel root is the only element that
+// paints a rectangle. This pins the bug where the root's between-children
+// border drew separator lines across the settings rows.
+@(test)
+test_panel_settings_paints_only_the_root :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	coretext.context_init(&panel.text)
+	defer coretext.context_destroy(&panel.text)
+	draw.list_init(&panel.list, pixel_ratio = 2)
+	defer draw.list_destroy(&panel.list)
+	panel.renderer = {list = &panel.list, text = &panel.text, viewport_height = 192}
+	hw_clay_ui.renderer_register_font(&panel.renderer, FONT_BODY, "Iosevka")
+	hw_clay_ui.renderer_register_font(&panel.renderer, FONT_BOLD, "Iosevka-Bold")
+	panel.memory = make([]u8, hw_clay.min_memory_size())
+	defer delete(panel.memory)
+	testing.expect(t, hw_clay.initialize(&panel.clay, panel.memory, {PANEL_WIDTH, 192}))
+	hw_clay.set_measure_text_function(&panel.clay, hw_clay_ui.measure_text, &panel.renderer)
+
+	palette := Panel_Palette{
+		background  = {24, 24, 26, 255},
+		border      = {255, 255, 255, 28},
+		text        = {235, 235, 240, 255},
+		secondary   = {145, 145, 155, 255},
+		field       = {40, 40, 44, 255},
+		field_focus = {56, 56, 62, 255},
+		error       = {235, 118, 118, 255},
+	}
+
+	settings.open = true
+	settings.texts[.Window] = "10"
+	settings.texts[.Interval] = "5"
+	defer {
+		settings.open = false
+		settings.texts[.Window] = ""
+		settings.texts[.Interval] = ""
+	}
+
+	commands := panel_build_layout(&panel.clay, nil, palette)
+	painted := 0
+	for command in commands {
+		switch data in command.render_data {
+		case hw_clay.Rectangle_Render_Data:
+			if data.background_color.a > 0 {
+				painted += 1
+			}
+		case hw_clay.Text_Render_Data, hw_clay.Image_Render_Data, hw_clay.Custom_Render_Data, hw_clay.Border_Render_Data, hw_clay.Clip_Render_Data, hw_clay.Overlay_Color_Render_Data:
+		}
+	}
+	testing.expect_value(t, painted, 1)
 }
 
 @(test)
