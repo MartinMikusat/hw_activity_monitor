@@ -320,10 +320,10 @@ ui_build_rows :: proc(
 				pid  = member.pid,
 				rank = index + 1,
 				name = fmt.aprintf(
-					"    %s%s",
+					"  %s%s",
 					ui_elide(
 						member.name,
-						max(8, name_chars-4-utf8.rune_count(process_suffix)),
+						max(8, name_chars-2-utf8.rune_count(process_suffix)),
 						context.temp_allocator,
 					),
 					process_suffix,
@@ -342,7 +342,7 @@ ui_build_rows :: proc(
 			append(&rows, Ui_Row{
 				kind = .Note,
 				key  = strings.clone(group.name, allocator),
-				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
+				name = fmt.aprintf("  … and %d more", hidden, allocator = allocator),
 			})
 		}
 	}

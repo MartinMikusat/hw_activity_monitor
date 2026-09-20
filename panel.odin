@@ -21,7 +21,7 @@ import metal "ui_framework:metal"
 import QC "vendor:darwin/QuartzCore"
 import MTL "vendor:darwin/Metal"
 
-PANEL_WIDTH :: 620
+PANEL_WIDTH :: 720
 PANEL_MIN_HEIGHT :: 160
 PANEL_MAX_HEIGHT :: 560
 PANEL_ROW_HEIGHT :: f32(20)
@@ -37,7 +37,7 @@ PANEL_STAT_WINDOW_CPU_WIDTH :: f32(56)
 PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(70)
 PANEL_SPARK_WIDTH :: f32(60)
 // The rank column holds the index number every row carries.
-PANEL_RANK_WIDTH :: f32(26)
+PANEL_RANK_WIDTH :: f32(22)
 // The gap between a row's cells. Kept small so names get the space.
 PANEL_ROW_GAP :: 6
 PANEL_PADDING_HORIZONTAL :: u16(6)
