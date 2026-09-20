@@ -8,6 +8,7 @@
 
 package activity_monitor
 
+import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import NS "core:sys/darwin/Foundation"
@@ -90,7 +91,8 @@ Panel :: struct {
 	// True while panel_draw runs: state changes made by a click handler must
 	// not start a nested draw, and resizes must happen before the drawable is
 	// acquired.
-	drawing:      bool,
+	drawing:        bool,
+	draw_scheduled: bool,
 }
 
 panel: Panel
@@ -133,6 +135,7 @@ panel_setup_renderer :: proc(layer: ^QC.MetalLayer, device: ^MTL.Device, queue: 
 		return false
 	}
 	hw_clay.set_measure_text_function(&panel.clay, hw_clay_ui.measure_text, &panel.renderer)
+	panel_sync_layer(panel.width, panel.height)
 	return true
 }
 
@@ -249,14 +252,46 @@ panel_set_size :: proc(width, height: f32) {
 	panel_window_set_frame(width, height)
 }
 
-// panel_mark_dirty draws once when the animation clock is idle. While a draw is
-// in flight, it only flags the frame: the running draw already picks up the
-// change, and a nested draw would present a stale-size frame after the correct
-// one.
+// panel_sync_layer makes the layer's geometry match the panel exactly:
+// contents scale, frame, and drawable size. The layer is ours (the view was
+// handed a CAMetalLayer), and AppKit only resizes it during a later layout
+// pass, so without this the layer can present a surface sized for the previous
+// content. Callers must run this before acquiring a drawable.
+panel_sync_layer :: proc(width, height: f32) {
+	if panel.layer == nil {
+		return
+	}
+	scale := f32(1)
+	if panel.window != nil {
+		scale = f32(panel.window->backingScaleFactor())
+	}
+	panel.layer->setContentsScale(NS.Float(scale))
+	panel.layer->setFrame({{0, 0}, {NS.Float(width), NS.Float(height)}})
+	panel.layer->setDrawableSize({NS.Float(width * scale), NS.Float(height * scale)})
+}
+
+// panel_mark_dirty schedules a draw on the next main-queue turn. Drawing
+// synchronously from an event handler can run before AppKit has applied a
+// window resize, which leaves the layer presenting a stale surface; deferring
+// lets the window, view, and layer settle first. While a draw is in flight the
+// change is only flagged: the running draw picks it up.
 panel_mark_dirty :: proc() {
 	if panel.drawing || panel_window_is_animating() {
 		panel.draw_dirty = true
 		return
+	}
+	if panel.draw_scheduled {
+		return
+	}
+	panel.draw_scheduled = true
+	dispatch_async_f(&_dispatch_main_q, nil, panel_draw_deferred_c)
+}
+
+panel_draw_deferred_c :: proc "c" (data: rawptr) {
+	context = runtime.default_context()
+	panel.draw_scheduled = false
+	if !panel_window.visible {
+		return // nothing to show; the next show starts the clock
 	}
 	panel_draw()
 }
@@ -352,6 +387,9 @@ panel_draw :: proc() {
 		panel_handle_click()
 	}
 
+	// The layer must match the panel before the drawable is acquired, so the
+	// texture this frame encodes into is the size it presents at.
+	panel_sync_layer(panel.width, panel.height)
 	scale := f32(1)
 	if panel.window != nil {
 		scale = f32(panel.window->backingScaleFactor())
@@ -363,8 +401,6 @@ panel_draw :: proc() {
 		}
 		return
 	}
-	panel.layer->setContentsScale(NS.Float(scale))
-	panel.layer->setDrawableSize({NS.Float(panel.width * scale), NS.Float(panel.height * scale)})
 
 	metal.begin_texture_frame(&panel.gpu)
 	coretext.begin_frame(&panel.text, scale, metal.atlas_io(&panel.gpu))

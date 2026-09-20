@@ -25,12 +25,18 @@ reports runaway CPU and memory and never kills anything.
 - The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
   one place AppKit owns content because the status item is AppKit's). Its Quit
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
-  the daemon immediately, so a plain exit is not a quit. Pointer handling and
-  click resolution run before the drawable is acquired in `panel_draw`, because
-  a click can resize the panel and the frame must be encoded at the size it is
-  presented with. Settings stay open through the close animation and close only
-  after the window is ordered out, so dismissing the panel never flashes the
-  list. `panel_check_geometry` logs a `panel_geometry` event when the window or
+  the daemon immediately, so a plain exit is not a quit.
+- The panel owns its CAMetalLayer geometry. `panel_sync_layer` sets the
+  contents scale, layer frame, and drawable size; it runs whenever the window
+  frame changes and again before every `nextDrawable`, because a drawable
+  acquired before the size is set is a frame behind and the layer would present
+  a surface sized for the previous content. Never set the drawable size after
+  acquiring. `panel_mark_dirty` defers the draw to the next main-queue turn
+  (coalesced) so it cannot race a window resize; while a draw is in flight it
+  only sets `draw_dirty`, and pointer/click handling runs before the drawable is
+  acquired. Settings stay open through the close animation and close only after
+  the window is ordered out, so dismissing the panel never flashes the list.
+  `panel_check_geometry` logs a `panel_geometry` event when the window or
   drawable height disagrees with the layout height: that mismatch is the
   signature of a stale frame, and the event keeps the numbers for next time.
 - The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,

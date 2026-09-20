@@ -239,6 +239,9 @@ panel_window_position :: proc() {
 	// The pivot sits on the panel's top edge under the icon, in draw list
 	// coordinates (bottom-left origin).
 	panel.anchor = {f32(center_x - x), panel.height}
+	// Keep the layer in step with the window: the next draw must not be the
+	// thing that fixes the surface size.
+	panel_sync_layer(panel.width, panel.height)
 }
 
 // --------------------------------------------------------------- animation
