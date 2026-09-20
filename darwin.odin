@@ -78,9 +78,9 @@ msg_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) -> Id {
 	return send(receiver, selector, a, b, c)
 }
 
-msg_id_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c, d: Id) -> Id {
-	send := transmute(proc "c" (Id, Sel, Id, Id, Id, Id) -> Id)objc_send_address
-	return send(receiver, selector, a, b, c, d)
+msg_id_id2 :: proc(receiver: Id, selector: Sel, a, b: Id) -> Id {
+	send := transmute(proc "c" (Id, Sel, Id, Id) -> Id)objc_send_address
+	return send(receiver, selector, a, b)
 }
 
 msg_void_id_id_id :: proc(receiver: Id, selector: Sel, a, b, c: Id) {
@@ -96,6 +96,27 @@ msg_void_u :: proc(receiver: Id, selector: Sel, value: u64) {
 msg_id_f64 :: proc(receiver: Id, selector: Sel, value: f64) -> Id {
 	send := transmute(proc "c" (Id, Sel, f64) -> Id)objc_send_address
 	return send(receiver, selector, value)
+}
+
+// nsfont_attribute_name resolves AppKit's NSFontAttributeName global (an
+// NSString pointer) through the framework handle. It is used to build the
+// attributed status title, which is what makes AppKit measure the title with
+// our font instead of the menu bar font.
+NSFontAttributeName_symbol: ^Id
+
+nsfont_attribute_name :: proc() -> Id {
+	if NSFontAttributeName_symbol == nil {
+		handle, loaded := dynlib.load_library("/System/Library/Frameworks/AppKit.framework/AppKit")
+		if !loaded {
+			return nil
+		}
+		address, found := dynlib.symbol_address(handle, "NSFontAttributeName")
+		if !found {
+			return nil
+		}
+		NSFontAttributeName_symbol = (^Id)(address)
+	}
+	return NSFontAttributeName_symbol^
 }
 
 msg_id_id_f64 :: proc(receiver: Id, selector: Sel, first: Id, second: f64) -> Id {

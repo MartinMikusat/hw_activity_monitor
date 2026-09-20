@@ -14,6 +14,11 @@ import "core:time"
 import "core:unicode/utf8"
 
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
+// The status title is set in Iosevka, the panel's monospace face, at a menu bar
+// size, with a little padding around the measured width.
+STATUS_FONT_NAME :: "Iosevka"
+STATUS_FONT_SIZE :: 13.0
+STATUS_TITLE_PADDING :: f64(6)
 // NSEventMask values are one bit per event type; the status button must be told
 // to send its action for right clicks too, so the menu can pop up.
 NSEVENT_MASK_LEFT_MOUSE_UP :: u64(1 << 2)
@@ -574,10 +579,7 @@ ui_start :: proc() -> bool {
 		return false
 	}
 	ui_state.button = button
-	// A monospaced font keeps the padded title at a constant width as the
-	// percentage changes, so the status item stops shifting its neighbours.
-	msg_void_id(button, sel_registerName("setFont:"), ui_status_font())
-	msg_void_id(button, sel_registerName("setTitle:"), nsstring("—"))
+	ui_set_status_title("—")
 
 	if !panel_window_init() {
 		return false
@@ -598,20 +600,71 @@ ui_run :: proc() {
 	}
 }
 
-// ui_status_font returns the system monospaced font at the default size, with
-// the menu bar font as a fallback, so the padded status title keeps a constant
-// width as the percentage changes.
+// ui_status_font returns the font the status title is drawn with: Iosevka, the
+// panel's monospace face, then the system monospaced font, then the menu bar
+// font.
 ui_status_font :: proc() -> Id {
-	font := msg_id_f64_f64(
+	font := msg_id_id_f64(
 		objc_getClass("NSFont"),
-		sel_registerName("monospacedSystemFontOfSize:weight:"),
-		0,
-		0,
+		sel_registerName("fontWithName:size:"),
+		nsstring(STATUS_FONT_NAME),
+		STATUS_FONT_SIZE,
 	)
+	if font == nil {
+		font = msg_id_f64_f64(
+			objc_getClass("NSFont"),
+			sel_registerName("monospacedSystemFontOfSize:weight:"),
+			0,
+			0,
+		)
+	}
 	if font == nil {
 		font = msg_id_f64(objc_getClass("NSFont"), sel_registerName("menuBarFontOfSize:"), 0)
 	}
 	return font
+}
+
+// ui_set_status_title draws the title in the status font and pins the status
+// item's length to the measured width. A plain title is measured with the menu
+// bar font, which is proportional, so the item would resize as the digits
+// change; the attributed title and the explicit length keep it still, and it
+// grows only when the text gains a character (at 100%).
+ui_set_status_title :: proc(text: string) {
+	item := ui_state.status_item
+	button := ui_state.button
+	if item == nil || button == nil {
+		return
+	}
+	font := ui_status_font()
+	attribute_name := nsfont_attribute_name()
+	attributes: Id
+	if font != nil && attribute_name != nil {
+		attributes = msg_id_id2(
+			objc_getClass("NSDictionary"),
+			sel_registerName("dictionaryWithObject:forKey:"),
+			font,
+			attribute_name,
+		)
+	}
+	attributed: Id
+	if attributes != nil {
+		allocated := msg_id0(objc_getClass("NSAttributedString"), sel_registerName("alloc"))
+		attributed = msg_id_id2(
+			allocated,
+			sel_registerName("initWithString:attributes:"),
+			nsstring(text),
+			attributes,
+		)
+	}
+	if attributed != nil {
+		msg_void_id(button, sel_registerName("setAttributedTitle:"), attributed)
+		size := msg_size_0(attributed, sel_registerName("size"))
+		msg_void_f64(item, sel_registerName("setLength:"), f64(size.width) + STATUS_TITLE_PADDING)
+		return
+	}
+	// Fallbacks: a plain title with the variable length.
+	msg_void_id(button, sel_registerName("setTitle:"), nsstring(text))
+	msg_void_f64(item, sel_registerName("setLength:"), NSVARIABLE_STATUS_ITEM_LENGTH)
 }
 
 // ui_active_cpu_count reports the number of active cores, or 1 before AppKit is
@@ -673,16 +726,10 @@ ui_apply_snapshot_c :: proc "c" (raw_snapshot: rawptr) {
 // ui_apply_snapshot runs on the main thread: title, panel content, then frees
 // the snapshot it replaced.
 ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
-	if ui_state.button != nil {
-		// The number is padded to two characters so the title is three
-		// characters wide (" 5%", "12%") and only reaches four at 100%. With
-		// the monospaced font this keeps the status item's width static.
-		msg_void_id(
-			ui_state.button,
-			sel_registerName("setTitle:"),
-			nsstring(fmt.tprintf("%2.0f%%", snapshot.total_percent)),
-		)
-	}
+	// The number is padded to two characters so the title is three characters
+	// wide (" 5%", "12%") and only reaches four at 100%; with the monospaced
+	// status font and the pinned item length the width stays put.
+	ui_set_status_title(fmt.tprintf("%2.0f%%", snapshot.total_percent))
 	ui_snapshot_reorder(snapshot)
 	previous := ui_state.snapshot
 	ui_state.snapshot = snapshot
