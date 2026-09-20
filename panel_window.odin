@@ -230,6 +230,14 @@ panel_window_position :: proc() {
 
 	width := f64(panel.width)
 	height := f64(panel.height)
+	if panel_mode == .Maximized {
+		x := visible_min_x + (f64(visible.size.width) - width) / 2
+		y := visible_min_y + (f64(visible.size.height) - height) / 2
+		window->setFrame(panel_ns(x, y, width, height), false)
+		panel.anchor = {panel.width / 2, panel.height}
+		panel_sync_layer(panel.width, panel.height)
+		return
+	}
 	center_x := f64(button_rect.origin.x) + f64(button_rect.size.width) / 2
 	x := center_x - width / 2
 	x = min(max(x, visible_min_x + PANEL_SCREEN_MARGIN), visible_max_x - width - PANEL_SCREEN_MARGIN)
@@ -300,6 +308,13 @@ panel_window_hide :: proc() {
 	panel_check_geometry("hide")
 }
 
+// panel_window_begin_animation unpauses the display link so an animation, fade,
+// or scroll can settle.
+panel_window_begin_animation :: proc() {
+	panel_window.has_time = false
+	macos.display_link_set_paused(&panel_window.display_link, false)
+}
+
 panel_window_is_animating :: proc() -> bool {
 	return panel_window.animating
 }
@@ -340,9 +355,20 @@ panel_tick :: proc(timestamp: f64) {
 		panel.progress = panel_window.progress
 	}
 
+	// The mode cross-fade runs independently of the open/close animation.
+	if panel.crossfade != panel.crossfade_target {
+		step := f32(delta) / PANEL_MODE_FADE_SECONDS
+		if panel.crossfade < panel.crossfade_target {
+			panel.crossfade = min(panel.crossfade + step, panel.crossfade_target)
+		} else {
+			panel.crossfade = max(panel.crossfade - step, panel.crossfade_target)
+		}
+	}
+
 	panel_draw()
 
-	if !panel_window.animating && timestamp >= panel_window.scroll_until {
+	if !panel_window.animating && panel.crossfade == panel.crossfade_target &&
+	   timestamp >= panel_window.scroll_until {
 		macos.display_link_set_paused(&panel_window.display_link, true)
 	}
 }

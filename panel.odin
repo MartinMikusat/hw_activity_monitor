@@ -83,6 +83,18 @@ Panel_Palette :: struct {
 	rank_yellow_text: hw_clay.Color,
 }
 
+Panel_Mode :: enum {
+	Popover,
+	Maximized,
+}
+
+// Seconds for one direction of the cross-fade. There is no scale or translation
+// on a mode switch: the window resizes instantly and only the content fades.
+PANEL_MODE_FADE_SECONDS :: f32(0.15)
+PANEL_MAXIMIZED_MARGIN :: f64(16)
+
+panel_mode: Panel_Mode = .Popover
+
 Panel :: struct {
 	// Surface, created by panel_window.odin.
 	window: ^NS.Panel,
@@ -97,6 +109,11 @@ Panel :: struct {
 	renderer: hw_clay_ui.Renderer,
 	clay:     hw_clay.Context,
 	memory:   []u8,
+	// The maximized tree has its own clay context, so a mode switch can draw
+	// both layouts in one frame without the two trees sharing element ids or
+	// layout dimensions.
+	clay_maximized: hw_clay.Context,
+	memory_maximized: []u8,
 	// Geometry.
 	width:  f32,
 	height: f32,
@@ -105,6 +122,12 @@ Panel :: struct {
 	progress: f32,
 	anchor:   [2]f32,
 	from:     [2]f32,
+	// Mode cross-fade: 0 shows only the popover tree, 1 only the maximized tree.
+	// `panel_mode` is already the target while this animates.
+	crossfade:        f32,
+	crossfade_target: f32,
+	// A maximized open/close fades without the popover's scale and translation.
+	fade_only: bool,
 	// Pending wheel delta for the next frame, and a dirty flag for redraws that
 	// happen outside the animation clock.
 	scroll_delta: [2]f32,
@@ -156,6 +179,17 @@ panel_setup_renderer :: proc(layer: ^QC.MetalLayer, device: ^MTL.Device, queue: 
 		return false
 	}
 	hw_clay.set_measure_text_function(&panel.clay, hw_clay_ui.measure_text, &panel.renderer)
+	panel.memory_maximized = make([]u8, hw_clay.min_memory_size())
+	if !hw_clay.initialize(
+		&panel.clay_maximized,
+		panel.memory_maximized,
+		{panel.width, panel.height},
+		{handler = panel_clay_error},
+	) {
+		fmt.eprintln("[panel] clay initialize failed for the maximized tree")
+		return false
+	}
+	hw_clay.set_measure_text_function(&panel.clay_maximized, hw_clay_ui.measure_text, &panel.renderer)
 	panel_sync_layer(panel.width, panel.height)
 	return true
 }
@@ -268,9 +302,20 @@ panel_draw_sparklines :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 	}
 }
 
+// panel_draw_charts draws the maximized view's per-group charts (two stacked
+// series with labels and peak markers). Filled in by the maximized layout.
+panel_draw_charts :: proc(rows: []Ui_Row, palette: Panel_Palette) {
+}
+
 // panel_content_changed recomputes the panel height for the current content,
 // resizes the window, and redraws if nothing else is driving the clock.
 panel_content_changed :: proc() {
+	if panel_mode == .Maximized {
+		panel_set_size(panel_maximized_width(), panel_maximized_height())
+		panel_mark_dirty()
+		panel_check_geometry("content_changed")
+		return
+	}
 	if settings.open {
 		panel_settings_resized()
 		return
@@ -284,6 +329,42 @@ panel_content_changed :: proc() {
 	panel_set_size(panel.width, height)
 	panel_mark_dirty()
 	panel_check_geometry("content_changed")
+}
+
+// panel_screen_visible_frame is the visible frame of the screen the popover
+// anchors to; the maximized panel fills it, inset by a margin.
+panel_screen_visible_frame :: proc() -> NS.Rect {
+	screen := NS.Screen.mainScreen()
+	if screen == nil {
+		return panel_ns(0, 0, 1440, 900)
+	}
+	return screen->visibleFrame()
+}
+
+panel_maximized_width :: proc() -> f32 {
+	frame := panel_screen_visible_frame()
+	return f32(f64(frame.size.width) - PANEL_MAXIMIZED_MARGIN * 2)
+}
+
+panel_maximized_height :: proc() -> f32 {
+	frame := panel_screen_visible_frame()
+	return f32(f64(frame.size.height) - PANEL_MAXIMIZED_MARGIN * 2)
+}
+
+// panel_begin_mode_switch changes between the popover and the maximized layout.
+// The window resizes immediately and only the content cross-fades: the popover
+// tree fades out over the maximized tree fading in. The mode is session state,
+// so a restart starts in the popover.
+panel_begin_mode_switch :: proc(mode: Panel_Mode) {
+	if panel_mode == mode {
+		return
+	}
+	panel_mode = mode
+	panel.crossfade_target = mode == .Maximized ? 1 : 0
+	panel_content_changed()
+	panel_window_position()
+	panel_window_begin_animation()
+	panel_mark_dirty()
 }
 
 panel_set_size :: proc(width, height: f32) {
@@ -431,6 +512,7 @@ panel_draw :: proc() {
 	// a click can resize the panel (opening or closing settings), and the frame
 	// must be encoded at the size it will be presented with.
 	hw_clay.set_pointer_state(&panel.clay, panel_pointer_position(), panel_window.pointer_down)
+	hw_clay.set_pointer_state(&panel.clay_maximized, panel_pointer_position(), panel_window.pointer_down)
 	if panel_window.click_pending {
 		panel_window.click_pending = false
 		panel_handle_click()
@@ -456,27 +538,23 @@ panel_draw :: proc() {
 	draw.list_reset(&panel.list)
 
 	panel_apply_scroll(PANEL_FRAME_SECONDS)
-	hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
 	rows := panel_rows()
 	palette := panel_palette()
-	commands := panel_build_layout(&panel.clay, rows, palette)
 
-	draw.push_opacity(&panel.list, panel_opacity(panel.progress))
-	draw.push_transform(&panel.list, panel_transform(
-		panel.progress,
-		panel.anchor.x,
-		panel.anchor.y,
-		panel.from.x,
-		panel.from.y,
-	))
-	hw_clay_ui.render_commands(&panel.renderer, commands)
-	if settings.open {
-		panel_draw_settings_caret(palette)
-	} else {
-		panel_draw_sparklines(rows, palette)
+	// Build only the trees that are on screen: one when settled, both during a
+	// mode switch.
+	maximized: []hw_clay.Render_Command
+	popover: []hw_clay.Render_Command
+	if panel_mode == .Maximized || panel.crossfade > 0 {
+		hw_clay.set_layout_dimensions(&panel.clay_maximized, {panel.width, panel.height})
+		maximized = panel_build_tree(&panel.clay_maximized, rows, palette, .Maximized)
 	}
-	draw.pop_transform(&panel.list)
-	draw.pop_opacity(&panel.list)
+	if panel_mode == .Popover || panel.crossfade < 1 {
+		hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
+		popover = panel_build_tree(&panel.clay, rows, palette, .Popover)
+	}
+
+	panel_render_trees(maximized, popover, rows, palette)
 
 	coretext.flush(&panel.text)
 
@@ -499,14 +577,74 @@ panel_draw :: proc() {
 	panel_check_geometry("draw")
 }
 
-panel_build_layout :: proc(
+// panel_render_trees draws the maximized tree, then the popover tree over it,
+// each with its own opacity so a mode switch cross-fades the popover out while
+// the maximized tree fades in. The maximized tree is always drawn with the
+// identity transform (a mode switch and the maximized open/close only fade);
+// the popover tree keeps its scale-and-slide animation unless a mode switch is
+// in progress.
+panel_render_trees :: proc(
+	maximized: []hw_clay.Render_Command,
+	popover: []hw_clay.Render_Command,
+	rows: []Ui_Row,
+	palette: Panel_Palette,
+) {
+	if len(maximized) > 0 {
+		draw.push_opacity(&panel.list, panel_opacity(panel.progress) * panel.crossfade)
+		hw_clay_ui.render_commands(&panel.renderer, maximized)
+		panel_draw_charts(rows, palette)
+		draw.pop_opacity(&panel.list)
+	}
+	if len(popover) > 0 {
+		draw.push_opacity(&panel.list, panel_opacity(panel.progress) * (1 - panel.crossfade))
+		popover_transform := panel.crossfade == 0
+		if popover_transform {
+			draw.push_transform(&panel.list, panel_transform(
+				panel.progress,
+				panel.anchor.x,
+				panel.anchor.y,
+				panel.from.x,
+				panel.from.y,
+			))
+		}
+		hw_clay_ui.render_commands(&panel.renderer, popover)
+		if settings.open {
+			panel_draw_settings_caret(palette)
+		} else {
+			panel_draw_sparklines(rows, palette)
+		}
+		if popover_transform {
+			draw.pop_transform(&panel.list)
+		}
+		draw.pop_opacity(&panel.list)
+	}
+}
+
+// panel_build_tree lays out one complete tree (popover or maximized) in its own
+// clay context. Both trees exist only during a mode switch; a settled panel
+// builds just its own.
+panel_build_tree :: proc(
 	ctx: ^hw_clay.Context,
 	rows: []Ui_Row,
 	palette: Panel_Palette,
+	mode: Panel_Mode,
 ) -> []hw_clay.Render_Command {
 	hw_clay.begin_layout(ctx)
+	panel_build_root(ctx, rows, palette, mode)
+	return hw_clay.end_layout(ctx, PANEL_FRAME_SECONDS)
+}
 
-	hw_clay.open_element(ctx, hw_clay.id("panel-root"))
+// panel_build_root builds one layout tree: the popover (which owns the settings
+// modal) or the maximized dashboard. The z-index tags the tree so the renderer
+// can cross-fade them independently.
+panel_build_root :: proc(
+	ctx: ^hw_clay.Context,
+	rows: []Ui_Row,
+	palette: Panel_Palette,
+	mode: Panel_Mode,
+) {
+	root_id := mode == .Maximized ? hw_clay.id("panel-root-maximized") : hw_clay.id("panel-root")
+	hw_clay.open_element(ctx, root_id)
 	hw_clay.configure_element(ctx, {
 		layout = {
 			layout_direction = .Top_To_Bottom,
@@ -528,18 +666,22 @@ panel_build_layout :: proc(
 		},
 	})
 
-	if settings.open {
+	if mode == .Popover && settings.open {
 		panel_settings_rows(ctx, palette)
 	} else {
-		panel_build_rows_list(ctx, rows, palette)
+		panel_build_rows_list(ctx, rows, palette, mode)
 	}
 
 	hw_clay.pop_element(ctx) // root
-	return hw_clay.end_layout(ctx, PANEL_FRAME_SECONDS)
 }
 
 // panel_build_rows_list builds the scrollable group/process list.
-panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Panel_Palette) {
+panel_build_rows_list :: proc(
+	ctx: ^hw_clay.Context,
+	rows: []Ui_Row,
+	palette: Panel_Palette,
+	mode: Panel_Mode,
+) {
 	hw_clay.open_element(ctx, hw_clay.id("panel-list"))
 	hw_clay.configure_element(ctx, {
 		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}, layout_direction = .Top_To_Bottom},
@@ -566,7 +708,12 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 		if row.kind == .Header {
 			panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
 			panel_push_button(ctx, hw_clay.id("panel-sort"), "Sort", palette)
-			panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
+			if mode == .Maximized {
+				panel_push_button(ctx, hw_clay.id("panel-restore"), "Restore", palette)
+			} else {
+				panel_push_button(ctx, hw_clay.id("panel-maximize"), "Maximize", palette)
+				panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
+			}
 			hw_clay.pop_element(ctx)
 			continue
 		}
@@ -624,7 +771,8 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			)
 			// The sparkline column reserves space for the series drawn after
 			// the clay commands; only group rows carry one.
-			hw_clay.open_element(ctx, hw_clay.id_indexed("panel-spark", u32(index)))
+			chart_label := mode == .Maximized ? "panel-chart" : "panel-spark"
+			hw_clay.open_element(ctx, hw_clay.id_indexed(chart_label, u32(index)))
 			hw_clay.configure_element(ctx, {
 				layout = {
 					sizing          = {hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
@@ -726,6 +874,11 @@ panel_settings_row_open :: proc(ctx: ^hw_clay.Context, index: int) {
 // panel_pointer_update schedules.
 panel_hovered :: proc(id: hw_clay.Element_Id) -> bool {
 	for over in hw_clay.get_pointer_over_ids(&panel.clay) {
+		if over == id {
+			return true
+		}
+	}
+	for over in hw_clay.get_pointer_over_ids(&panel.clay_maximized) {
 		if over == id {
 			return true
 		}
@@ -915,9 +1068,40 @@ panel_pointer_position :: proc() -> hw_clay.Vector2 {
 
 // panel_handle_click resolves a mouse-up against the previous frame's layout,
 // which is what the user saw when they pressed.
+// panel_click handles the ids both trees share: the header buttons and the mode
+// switch. It returns true when the id was consumed.
+panel_click :: proc(id: hw_clay.Element_Id) -> bool {
+	if id == hw_clay.id("panel-sort") {
+		ui_sort_now()
+		panel_mark_dirty()
+		return true
+	}
+	if id == hw_clay.id("panel-maximize") {
+		panel_begin_mode_switch(.Maximized)
+		return true
+	}
+	if id == hw_clay.id("panel-restore") {
+		panel_begin_mode_switch(.Popover)
+		return true
+	}
+	return false
+}
+
+// panel_handle_click resolves a mouse-up against the previous frame's layout,
+// which is what the user saw when they pressed. Both trees are consulted: the
+// maximized one for its buttons, the popover one for its buttons and for the
+// settings modal.
 panel_handle_click :: proc() {
 	if !panel_window.visible || panel_window.animating {
 		return
+	}
+	if panel.crossfade != panel.crossfade_target {
+		return // a mode switch is in flight; ignore clicks until it settles
+	}
+	for id in hw_clay.get_pointer_over_ids(&panel.clay_maximized) {
+		if panel_click(id) {
+			return
+		}
 	}
 	for id in hw_clay.get_pointer_over_ids(&panel.clay) {
 		if settings_click(id) {
@@ -927,9 +1111,7 @@ panel_handle_click :: proc() {
 			settings_open()
 			return
 		}
-		if id == hw_clay.id("panel-sort") {
-			ui_sort_now()
-			panel_mark_dirty()
+		if panel_click(id) {
 			return
 		}
 	}

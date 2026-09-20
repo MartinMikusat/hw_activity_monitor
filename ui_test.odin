@@ -358,7 +358,7 @@ test_panel_settings_paints_only_the_root :: proc(t: ^testing.T) {
 		settings.texts[.Interval] = ""
 	}
 
-	commands := panel_build_layout(&panel.clay, nil, palette)
+	commands := panel_build_tree(&panel.clay, nil, palette, .Popover)
 	painted := 0
 	for command in commands {
 		switch data in command.render_data {

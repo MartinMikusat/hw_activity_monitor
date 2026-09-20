@@ -42,6 +42,9 @@ Ui_Row :: struct {
 	window_cpu:    string, // "avg 9.0%" over the history window
 	window_memory: string, // "+340.0 MB" growth over the history window
 	spark:         []f32,  // windowed CPU series, oldest first; group rows only
+	spark_memory:  []f32,  // windowed footprint series, oldest first; group rows only
+	cpu_peak:      f64,    // windowed CPU peak, for the chart's peak marker
+	memory_peak:   u64,    // windowed footprint peak
 }
 
 // Stat_Selection is which of the four stat columns the panel shows. Group rows
@@ -265,10 +268,14 @@ ui_build_rows :: proc(
 			trend := trends[trend_index]
 			if stats.window_cpu {
 				row.window_cpu = percent_text(trend.cpu_avg, allocator)
+				row.cpu_peak = trend.cpu_peak
+				row.memory_peak = trend.memory_peak
 				if len(trend.samples) >= 2 {
 					row.spark = make([]f32, len(trend.samples), allocator)
+					row.spark_memory = make([]f32, len(trend.samples), allocator)
 					for sample, index in trend.samples {
 						row.spark[index] = f32(sample.cpu_percent)
+						row.spark_memory[index] = f32(sample.memory_bytes)
 					}
 				}
 			}
@@ -800,6 +807,9 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 		}
 		if len(row.spark) > 0 {
 			delete(row.spark, snapshot.allocator)
+		}
+		if len(row.spark_memory) > 0 {
+			delete(row.spark_memory, snapshot.allocator)
 		}
 	}
 	delete(snapshot.rows, snapshot.allocator)
