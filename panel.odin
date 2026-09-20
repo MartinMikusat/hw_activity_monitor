@@ -43,6 +43,9 @@ PANEL_SPARK_WIDTH :: f32(60)
 PANEL_CHART_MIN_ROWS :: 4
 PANEL_CHART_AXIS_HEIGHT :: f32(18)
 PANEL_CHART_GAP :: 10
+// The label column sits between the rows and the chart, wide enough for the
+// longest pair of values it can hold ("MEM 1023.9 MB peak 1023.9 MB").
+PANEL_CHART_LABEL_WIDTH :: f32(190)
 // The rank column holds the index number on group rows; process rows keep the
 // column empty and put their rank inline, indented, next to the label.
 PANEL_RANK_WIDTH :: f32(22)
@@ -952,7 +955,7 @@ panel_push_group_block :: proc(
 	}
 	hw_clay.pop_element(ctx) // text column
 
-	panel_push_chart_column(ctx, group_row, row_index, block_height, palette)
+	panel_push_chart_columns(ctx, group_row, row_index, block_height, palette)
 	hw_clay.pop_element(ctx) // block
 }
 
@@ -969,7 +972,7 @@ panel_push_blank_row :: proc(ctx: ^hw_clay.Context, row_index: int) {
 // panel_push_chart_column pushes one group's chart: the series area with its
 // value labels, and the time axis under it. panel_draw_charts draws the series
 // into the area after the clay commands.
-panel_push_chart_column :: proc(
+panel_push_chart_columns :: proc(
 	ctx: ^hw_clay.Context,
 	row: Ui_Row,
 	row_index: int,
@@ -979,6 +982,39 @@ panel_push_chart_column :: proc(
 	body_height := block_height - PANEL_CHART_AXIS_HEIGHT
 	half := body_height / 2
 
+	// The label column: one cell per series band, aligned with the chart beside
+	// it, then a spacer that lines up with the chart's axis.
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-labels", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.fixed(PANEL_CHART_LABEL_WIDTH), hw_clay.grow()},
+			layout_direction = .Top_To_Bottom,
+		},
+	})
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-label-cpu", u32(row_index)),
+		panel_chart_cpu_text(row),
+		panel_chart_peak_cpu_text(row),
+		half,
+		palette,
+	)
+	panel_push_chart_label(
+		ctx,
+		hw_clay.id_indexed("panel-chart-label-memory", u32(row_index)),
+		panel_chart_memory_text(row),
+		panel_chart_peak_memory_text(row),
+		half,
+		palette,
+	)
+	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-label-axis", u32(row_index)))
+	hw_clay.configure_element(ctx, {
+		layout = {sizing = {hw_clay.grow(), hw_clay.fixed(PANEL_CHART_AXIS_HEIGHT)}},
+	})
+	hw_clay.pop_element(ctx)
+	hw_clay.pop_element(ctx) // label column
+
+	// The chart: the series area, then the time axis under it.
 	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-column", u32(row_index)))
 	hw_clay.configure_element(ctx, {
 		layout = {
@@ -991,44 +1027,6 @@ panel_push_chart_column :: proc(
 	hw_clay.configure_element(ctx, {
 		layout = {sizing = {hw_clay.grow(), hw_clay.grow()}},
 	})
-	// The labels float over the series: the current value at the left of each
-	// band, the peak the dot marks at its right.
-	panel_push_chart_label(
-		ctx,
-		hw_clay.id_indexed("panel-chart-cpu", u32(row_index)),
-		panel_chart_cpu_text(row),
-		{2, 1},
-		.Left_Top,
-		.Left_Top,
-		palette.text,
-	)
-	panel_push_chart_label(
-		ctx,
-		hw_clay.id_indexed("panel-chart-peak-cpu", u32(row_index)),
-		panel_chart_peak_cpu_text(row),
-		{-2, 1},
-		.Right_Top,
-		.Right_Top,
-		palette.secondary,
-	)
-	panel_push_chart_label(
-		ctx,
-		hw_clay.id_indexed("panel-chart-memory", u32(row_index)),
-		panel_chart_memory_text(row),
-		{2, half + 1},
-		.Left_Top,
-		.Left_Top,
-		palette.text,
-	)
-	panel_push_chart_label(
-		ctx,
-		hw_clay.id_indexed("panel-chart-peak-memory", u32(row_index)),
-		panel_chart_peak_memory_text(row),
-		{-2, half + 1},
-		.Right_Top,
-		.Right_Top,
-		palette.secondary,
-	)
 	hw_clay.pop_element(ctx) // series area
 
 	hw_clay.open_element(ctx, hw_clay.id_indexed("panel-chart-axis", u32(row_index)))
@@ -1052,36 +1050,29 @@ panel_push_chart_column :: proc(
 	hw_clay.pop_element(ctx) // chart column
 }
 
-// panel_push_chart_label floats one label inside the series area at a layout
-// offset, so it sits at the point its series is drawn at.
+// panel_push_chart_label pushes one label cell: the current value and the peak
+// of one series, right-aligned beside the chart and vertically centered in the
+// band that series occupies.
 panel_push_chart_label :: proc(
 	ctx: ^hw_clay.Context,
 	id: hw_clay.Element_Id,
-	text: string,
-	offset: hw_clay.Vector2,
-	element_point, parent_point: hw_clay.Floating_Attach_Point,
-	color: hw_clay.Color,
+	value, peak: string,
+	height: f32,
+	palette: Panel_Palette,
 ) {
-	if text == "" {
-		return
-	}
 	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
-		layout = {sizing = {hw_clay.fit(), hw_clay.fit()}},
-		floating = {
-			attach_to            = .Parent,
-			attach_points        = {element = element_point, parent = parent_point},
-			offset               = offset,
-			clip_to              = .Attached_Parent,
-			pointer_capture_mode = .Passthrough,
+		layout = {
+			sizing          = {hw_clay.grow(), hw_clay.fixed(height)},
+			child_alignment = {x = .Right, y = .Center},
+			child_gap       = 6,
 		},
+		clip = {horizontal = true},
 	})
-	hw_clay.push_text(ctx, text, {
-		font_id   = u16(FONT_BODY),
-		font_size = PANEL_FONT_SIZE,
-		color     = color,
-		wrap_mode = .None,
-	})
+	panel_push_text(ctx, value, FONT_BODY, palette.text, {hw_clay.fit(), hw_clay.grow()}, .Right)
+	if peak != "" {
+		panel_push_text(ctx, peak, FONT_BODY, palette.secondary, {hw_clay.fit(), hw_clay.grow()}, .Right)
+	}
 	hw_clay.pop_element(ctx)
 }
 

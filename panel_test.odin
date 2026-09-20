@@ -123,18 +123,20 @@ panel_maximized_block_spans_its_chart :: proc(t: ^testing.T) {
 	testing.expect_value(t, block_one.height, f32(PANEL_CHART_MIN_ROWS)*PANEL_ROW_HEIGHT)
 	testing.expect_value(t, block_two.height, f32(5)*PANEL_ROW_HEIGHT)
 
-	// The chart column is a third of the panel's content, and the text column
-	// takes the rest of the block beside it.
-	column := panel_test_box(t, "panel-chart-column", 1)
-	testing.expect_value(t, column.width, panel_chart_column_width(panel.width))
+	// The block is the rows, the label column, and the chart column, in that
+	// order; the chart column is a third of the panel's content.
 	text := panel_test_box(t, "panel-block-rows", 1)
+	labels := panel_test_box(t, "panel-chart-labels", 1)
+	column := panel_test_box(t, "panel-chart-column", 1)
+	testing.expect_value(t, labels.width, PANEL_CHART_LABEL_WIDTH)
+	testing.expect_value(t, column.width, panel_chart_column_width(panel.width))
 	testing.expectf(
 		t,
-		text.width+column.width+f32(PANEL_CHART_GAP) == block_one.width,
-		"text %.1f + chart %.1f + gap %d != block %.1f",
+		text.width+labels.width+column.width+f32(PANEL_CHART_GAP)*2 == block_one.width,
+		"text %.1f + labels %.1f + chart %.1f + gaps != block %.1f",
 		text.width,
+		labels.width,
 		column.width,
-		PANEL_CHART_GAP,
 		block_one.width,
 	)
 
@@ -154,14 +156,19 @@ panel_maximized_block_spans_its_chart :: proc(t: ^testing.T) {
 		testing.expect_value(t, body.y, column_i.y)
 	}
 
-	// The labels sit in their series' band: the CPU value at the top of the
-	// body, the memory value at the top of the lower half.
+	// Each label cell is centered on the band its series occupies, so the
+	// values never sit on the chart.
 	body := panel_test_box(t, "panel-chart", 1)
-	cpu := panel_test_box(t, "panel-chart-cpu", 1)
-	memory := panel_test_box(t, "panel-chart-memory", 1)
-	testing.expect_value(t, cpu.y, body.y+1)
-	testing.expect_value(t, memory.y, body.y+body.height/2+1)
-	testing.expect_value(t, cpu.x, body.x+2)
+	cpu := panel_test_box(t, "panel-chart-label-cpu", 1)
+	memory := panel_test_box(t, "panel-chart-label-memory", 1)
+	spacer := panel_test_box(t, "panel-chart-label-axis", 1)
+	axis := panel_test_box(t, "panel-chart-axis", 1)
+	testing.expect_value(t, cpu.y, body.y)
+	testing.expect_value(t, cpu.height, body.height/2)
+	testing.expect_value(t, memory.y, body.y+body.height/2)
+	testing.expect_value(t, memory.height, body.height/2)
+	testing.expect_value(t, spacer.height, PANEL_CHART_AXIS_HEIGHT)
+	testing.expect_value(t, spacer.y, axis.y)
 }
 
 @(test)

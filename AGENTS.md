@@ -36,11 +36,11 @@ reports runaway CPU and memory and never kills anything.
   `PANEL_CHART_MIN_ROWS` — so a short group gets blank rows and its chart always
   has room. `panel_draw_charts` draws the two series into the chart body after
   the clay commands (CPU in the text color, memory in the secondary color), each
-  scaled to its own peak, over a faint baseline, with a dot on the peak sample;
-  the value and peak labels are clay text floating in the body, so the layout
-  positions them. `panel_test.odin` checks the block and chart geometry against a
-  real headless clay layout, which is how the dashboard is verified without
-  driving the UI.
+  scaled to its own peak, over a faint baseline, with a dot on the peak sample.
+  The values and peaks sit in a label column between the rows and the chart, one
+  cell per series band so they never cover the series. `panel_test.odin` checks
+  the block, column, label, and axis geometry against a real headless clay
+  layout, which is how the dashboard is verified without driving the UI.
 - The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
   one place AppKit owns content because the status item is AppKit's). Its Quit
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
