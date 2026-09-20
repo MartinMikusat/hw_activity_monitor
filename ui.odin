@@ -574,6 +574,9 @@ ui_start :: proc() -> bool {
 		return false
 	}
 	ui_state.button = button
+	// A monospaced font keeps the padded title at a constant width as the
+	// percentage changes, so the status item stops shifting its neighbours.
+	msg_void_id(button, sel_registerName("setFont:"), ui_status_font())
 	msg_void_id(button, sel_registerName("setTitle:"), nsstring("—"))
 
 	if !panel_window_init() {
@@ -595,6 +598,24 @@ ui_run :: proc() {
 	}
 }
 
+// ui_status_font returns the system monospaced font at the default size, with
+// the menu bar font as a fallback, so the padded status title keeps a constant
+// width as the percentage changes.
+ui_status_font :: proc() -> Id {
+	font := msg_id_f64_f64(
+		objc_getClass("NSFont"),
+		sel_registerName("monospacedSystemFontOfSize:weight:"),
+		0,
+		0,
+	)
+	if font == nil {
+		font = msg_id_f64(objc_getClass("NSFont"), sel_registerName("menuBarFontOfSize:"), 0)
+	}
+	return font
+}
+
+// ui_active_cpu_count reports the number of active cores, or 1 before AppKit is
+// available.
 ui_active_cpu_count :: proc() -> int {
 	if objc_send_address == nil {
 		return 1
@@ -653,10 +674,13 @@ ui_apply_snapshot_c :: proc "c" (raw_snapshot: rawptr) {
 // the snapshot it replaced.
 ui_apply_snapshot :: proc(snapshot: ^Ui_Snapshot) {
 	if ui_state.button != nil {
+		// The number is padded to two characters so the title is three
+		// characters wide (" 5%", "12%") and only reaches four at 100%. With
+		// the monospaced font this keeps the status item's width static.
 		msg_void_id(
 			ui_state.button,
 			sel_registerName("setTitle:"),
-			nsstring(fmt.tprintf("%.0f%%", snapshot.total_percent)),
+			nsstring(fmt.tprintf("%2.0f%%", snapshot.total_percent)),
 		)
 	}
 	ui_snapshot_reorder(snapshot)
