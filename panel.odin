@@ -287,7 +287,11 @@ panel_draw_charts :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 // panel_content_changed resizes the panel for the current content and fills the
 // new frame in the same turn: a resize invalidates the layer's contents, and
 // waiting for the next turn would show a blank panel until the draw lands.
-panel_content_changed :: proc() {
+//
+// With force_resize false, an open popover keeps its height: content updates
+// scroll instead of moving the window. Deliberate size changes (a mode switch)
+// pass true.
+panel_content_changed :: proc(force_resize := false) {
 	if panel_mode == .Maximized {
 		panel_set_size(panel_maximized_width(), panel_maximized_height())
 		panel_draw()
@@ -307,7 +311,7 @@ panel_content_changed :: proc() {
 	// While the panel is open its height is fixed: a content update must not
 	// move the window, so the list scrolls instead. The next open sizes the
 	// panel afresh for the content it then has.
-	if panel_window.visible {
+	if panel_window.visible && !force_resize {
 		panel_draw()
 		return
 	}
@@ -346,7 +350,7 @@ panel_begin_mode_switch :: proc(mode: Panel_Mode) {
 		return
 	}
 	panel_mode = mode
-	panel_content_changed()
+	panel_content_changed(true) // a mode switch always resizes, even while open
 	panel_window_position()
 	panel_mark_dirty()
 }
