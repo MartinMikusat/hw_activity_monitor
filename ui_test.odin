@@ -99,8 +99,8 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	samples := []Process_Sample{{pid = 5765, name = long, cpu_fraction = 0.2, memory_bytes = 4 << 30}}
 	groups := group_samples(samples)
 	rows := ui_build_rows(groups, samples, nil, test_options(5, 1), context.temp_allocator)
-	testing.expect_value(t, rows[1].name, "com.apple.Virtual… ×1")
-	testing.expect_value(t, rows[2].name, "    com.apple… · 5765")
+	testing.expect_value(t, rows[1].name, "com.apple.Virtualization.VirtualMachi… ×1")
+	testing.expect_value(t, rows[2].name, "    com.apple.Virtualization.Virt… · 5765")
 }
 
 @(test)

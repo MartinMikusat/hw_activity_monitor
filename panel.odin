@@ -21,7 +21,7 @@ import metal "ui_framework:metal"
 import QC "vendor:darwin/QuartzCore"
 import MTL "vendor:darwin/Metal"
 
-PANEL_WIDTH :: 540
+PANEL_WIDTH :: 620
 PANEL_MIN_HEIGHT :: 160
 PANEL_MAX_HEIGHT :: 560
 PANEL_ROW_HEIGHT :: f32(20)
@@ -29,14 +29,17 @@ PANEL_FONT_SIZE :: u16(12)
 // Stats columns are fixed width so the CPU and memory values line up
 // vertically across rows. The widths cover the widest realistic text at
 // PANEL_FONT_SIZE (Iosevka at 12 px advances 6 px per character): "2400%",
-// "1023.9 MB", "avg 2400%", and "+1023.9 MB".
-PANEL_STAT_CPU_WIDTH :: f32(46)
-PANEL_STAT_MEMORY_WIDTH :: f32(66)
-PANEL_STAT_WINDOW_CPU_WIDTH :: f32(58)
-PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(78)
-PANEL_SPARK_WIDTH :: f32(72)
+// "1023.9 MB", "avg 2400%", and "+1023.9 MB". Everything left over belongs to
+// the name column.
+PANEL_STAT_CPU_WIDTH :: f32(42)
+PANEL_STAT_MEMORY_WIDTH :: f32(62)
+PANEL_STAT_WINDOW_CPU_WIDTH :: f32(56)
+PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(70)
+PANEL_SPARK_WIDTH :: f32(60)
 // The rank column holds the index number every row carries.
 PANEL_RANK_WIDTH :: f32(26)
+// The gap between a row's cells. Kept small so names get the space.
+PANEL_ROW_GAP :: 6
 PANEL_PADDING_HORIZONTAL :: u16(6)
 PANEL_PADDING_VERTICAL :: u16(6)
 PANEL_CORNER_RADIUS :: f32(10)
@@ -189,7 +192,7 @@ panel_name_chars :: proc(stats: Stat_Selection) -> int {
 	}
 	// The rank cell and the name share the row with the stat columns, so there
 	// is one more gap than stat columns.
-	gaps := f32((columns + 1) * 8)
+	gaps := f32((columns + 1) * PANEL_ROW_GAP)
 	width := f32(PANEL_WIDTH-PANEL_PADDING_HORIZONTAL*2) - fixed - gaps
 	return int(width / (f32(PANEL_FONT_SIZE) * 0.5)) - 1
 }
@@ -532,7 +535,7 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			layout = {
 				sizing          = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
 				child_alignment = {y = .Center},
-				child_gap       = 8,
+				child_gap       = PANEL_ROW_GAP,
 			},
 			background_color = panel_rank_background(row, palette),
 		})
