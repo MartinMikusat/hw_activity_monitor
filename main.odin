@@ -81,10 +81,13 @@ main :: proc() {
 		switch {
 		case argument == "--once":
 			once = true
+		case argument == "--version":
+			fmt.printf("hw_activity_monitor %s\n", VERSION)
+			return
 		case strings.has_prefix(argument, "--config="):
 			config_path_override = argument[len("--config="):]
 		case:
-			fmt.eprintln("usage: hw_activity_monitor [--once] [--config=PATH]")
+			fmt.eprintln("usage: hw_activity_monitor [--once] [--version] [--config=PATH]")
 			os.exit(2)
 		}
 	}
@@ -142,6 +145,7 @@ run_app :: proc(config: Config) {
 	monitor.history.window = time.Duration(config.window_seconds * f64(time.Second))
 	monitor.log = log_open()
 	backend := notify_init(monitor.log)
+	update_auto_enabled = config.auto_update
 
 	log_event(monitor.log, "started", fmt.tprintf(
 		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"memory_mb\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",
@@ -157,11 +161,21 @@ run_app :: proc(config: Config) {
 	if !ui_start() {
 		// No window server or AppKit: keep alerting without the status item.
 		log_event(monitor.log, "ui_unavailable", "\"fallback\":\"headless\"")
+		if update_auto_enabled {
+			if worker := thread.create(update_worker); worker != nil {
+				thread.start(worker)
+			}
+		}
 		run_headless()
 		return
 	}
 	if worker := thread.create(monitor_worker); worker != nil {
 		thread.start(worker)
+	}
+	if update_auto_enabled {
+		if worker := thread.create(update_worker); worker != nil {
+			thread.start(worker)
+		}
 	}
 	ui_run()
 }

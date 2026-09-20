@@ -23,6 +23,7 @@ Config :: struct {
 	show_memory:       bool,
 	show_window_cpu:   bool,
 	show_window_memory: bool,
+	auto_update:       bool,
 }
 
 // Defaults are tuned for a single-core runaway like a forgotten demo window at
@@ -66,6 +67,7 @@ config_defaults :: proc() -> Config {
 		show_memory       = true,
 		show_window_cpu   = true,
 		show_window_memory = true,
+		auto_update       = true,
 	}
 }
 

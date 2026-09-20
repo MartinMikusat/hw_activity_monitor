@@ -30,7 +30,9 @@ separate small numbers.
 ./test.sh                    # rule-engine tests + compile check
 ./install.sh                 # build, install the app bundle, load LaunchAgent
 ./uninstall.sh               # unload and remove bundle (config and logs kept)
+./release.sh                 # build, zip, and publish a GitHub release
 hw_activity_monitor --once   # sample twice, print the busiest groups with CPU and memory
+hw_activity_monitor --version
 ```
 
 Install copies the binary into `~/Applications/hw_activity_monitor.app` (a
@@ -99,7 +101,8 @@ their default):
   "show_cpu": true,
   "show_memory": true,
   "show_window_cpu": true,
-  "show_window_memory": true
+  "show_window_memory": true,
+  "auto_update": true
 }
 ```
 
@@ -121,9 +124,36 @@ their default):
   safelisted.
 - `show_*` keys pick the panel's four stat columns: instant CPU, instant
   memory, windowed CPU average, and windowed memory change.
+- `auto_update` lets the installed app update itself from GitHub releases;
+  `false` keeps it on the installed build until you run `./install.sh` again.
 
 The settings modal edits `window_seconds`, `interval_seconds`, and the
 `show_*` keys; everything else stays file-edited.
+
+## Updates
+
+The installed app updates itself from GitHub releases. At startup and once a
+day it fetches the latest release, compares versions, and if newer downloads the
+bundle, verifies the SHA-256 published beside the archive, checks the code
+signature and the bundle's own version, then swaps the bundle in place —
+keeping the previous one as `hw_activity_monitor.app.backup` — and restarts
+through launchd. Nothing from the download runs before the swap; the checksum
+and signature are the gate.
+
+- Attempts land in the event log: `update_available`, `update_installed`,
+  `update_failed` (with the failing stage). A missing release or no network is
+  not a failure and stays silent.
+- Development binaries never update themselves: only an executable inside a
+  `.app` is replaced, so `build/hw_activity_monitor` is safe to run.
+- **Check for Updates** in the status menu runs one check immediately.
+- Cutting a release: bump `VERSION` in `version.odin`, commit, then run
+  `./release.sh`. It builds the bundle, zips it with a `.sha256`, and publishes
+  a GitHub release whose asset names (`hw_activity_monitor-<version>.zip` and
+  `.zip.sha256`) are the updater's contract.
+
+The trust anchor is the GitHub repository over TLS: the checksum travels in the
+same release as the archive, so it protects against a corrupted download, not
+against a compromised repository.
 
 ## Notification delivery
 
@@ -151,6 +181,7 @@ group CPU percent, footprint bytes, sustained seconds, pids, whether a banner
 was requested), `settings_saved` (the window, interval, and column selection
 the worker picked up), `panel_geometry` (a panel window or drawable size that
 disagreed with the layout; the signature of a stale frame), `quit`,
+`update_available`, `update_installed`, `update_failed` (with the stage),
 `notification_authorization` (granted, or the error), and `notification_failed`
 (the API error). Events are rare — one per alert episode — so the file is not
 rotated.

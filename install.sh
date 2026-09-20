@@ -10,39 +10,16 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 "$ROOT/build.sh" release
 
+VERSION=$(sed -n 's/^VERSION :: "\(.*\)"/\1/p' "$ROOT/version.odin")
+if [ -z "$VERSION" ]; then
+	echo "[hw_activity_monitor] cannot read VERSION from version.odin" >&2
+	exit 1
+fi
+
 # The daemon runs inside a minimal .app bundle: a bundle identifier is what
 # lets UNUserNotificationCenter deliver banners attributed to this app.
-mkdir -p "$APP_DIR/Contents/MacOS" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-cp -f "$ROOT/build/hw_activity_monitor" "$EXECUTABLE"
-
-cat > "$APP_DIR/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key>
-	<string>hw_activity_monitor</string>
-	<key>CFBundleIdentifier</key>
-	<string>$LABEL</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>hw_activity_monitor</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSUIElement</key>
-	<true/>
-</dict>
-</plist>
-EOF
-
-# Ad-hoc signing: TCC and notification registration on recent macOS expect a
-# code signature even for a locally built bundle.
-codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || true
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+"$ROOT/bundle.sh" "$APP_DIR" "$ROOT/build/hw_activity_monitor" "$VERSION"
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

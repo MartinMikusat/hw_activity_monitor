@@ -46,6 +46,15 @@ status_menu_build :: proc() -> Id {
 	)
 	msg_void_id(settings_item, sel_registerName("setTarget:"), panel_window.controller)
 
+	update_item := msg_id_id_id(
+		menu,
+		sel_registerName("addItemWithTitle:action:keyEquivalent:"),
+		nsstring("Check for Updates"),
+		sel_registerName("checkForUpdates:"),
+		nsstring(""),
+	)
+	msg_void_id(update_item, sel_registerName("setTarget:"), panel_window.controller)
+
 	msg_void_id(
 		menu,
 		sel_registerName("addItem:"),
@@ -78,6 +87,13 @@ panel_open_settings_callback :: proc "c" (self: Id, cmd: Sel, sender: Id) {
 panel_quit_callback :: proc "c" (self: Id, cmd: Sel, sender: Id) {
 	context = runtime.default_context()
 	monitor_quit()
+}
+
+// panel_check_updates_callback starts one update check on its own thread, so the
+// menu never blocks on the network.
+panel_check_updates_callback :: proc "c" (self: Id, cmd: Sel, sender: Id) {
+	context = runtime.default_context()
+	update_check_now()
 }
 
 // monitor_quit stops the daemon for good. launchd keeps the process alive, so a

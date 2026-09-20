@@ -11,6 +11,7 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 Log :: struct {
@@ -43,6 +44,12 @@ log_close :: proc(log: Log) {
 // log_event appends one line: {"time":"...","event":"...",<fields>}. Fields are
 // pre-formatted `"key":value` pairs; wrap string values in log_string. The line
 // is assembled field by field because fmt's format syntax reserves `{`.
+//
+// The sampler worker, the update thread, and the main thread all append to the
+// same file, so the write itself is serialized; Log is passed by value around
+// the program, which is why the mutex is global rather than a field.
+log_mutex: sync.Mutex
+
 log_event :: proc(log: Log, event: string, fields: string) {
 	if log.file == nil {
 		return
@@ -55,6 +62,8 @@ log_event :: proc(log: Log, event: string, fields: string) {
 	strings.write_byte(&builder, ',')
 	strings.write_string(&builder, fields)
 	strings.write_string(&builder, "}\n")
+	sync.lock(&log_mutex)
+	defer sync.unlock(&log_mutex)
 	os.write_string(log.file, strings.to_string(builder))
 }
 

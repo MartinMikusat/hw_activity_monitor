@@ -175,6 +175,7 @@ panel_make_controller :: proc() -> ^NS.Object {
 	if !panel_add_method(class, "panelFrame:", rawptr(panel_frame_callback), "v@:@") ||
 	   !panel_add_method(class, "togglePanel:", rawptr(panel_toggle_callback), "v@:@") ||
 	   !panel_add_method(class, "openSettings:", rawptr(panel_open_settings_callback), "v@:@") ||
+	   !panel_add_method(class, "checkForUpdates:", rawptr(panel_check_updates_callback), "v@:@") ||
 	   !panel_add_method(class, "quitApp:", rawptr(panel_quit_callback), "v@:@") {
 		return nil
 	}

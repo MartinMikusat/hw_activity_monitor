@@ -34,7 +34,18 @@ reports runaway CPU and memory and never kills anything.
 - The status item's right-click menu lives in `menu.odin` (AppKit NSMenu, the
   one place AppKit owns content because the status item is AppKit's). Its Quit
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
-  the daemon immediately, so a plain exit is not a quit.
+  the daemon immediately, so a plain exit is not a quit. Its "Check for Updates"
+  starts one check on its own thread.
+- Updates live in `update.odin` and version identity in `version.odin` (the
+  single source; `install.sh`, `release.sh`, and the updater all read it).
+  `update_worker` checks the latest GitHub release at startup and daily on its
+  own thread, then verifies the download's SHA-256, the bundle's code signature,
+  and the bundle's `CFBundleShortVersionString` before swapping the `.app` in
+  place (previous bundle kept as `.backup`) and restarting through launchd.
+  Only executables inside a `.app` update themselves. `release.sh` (with
+  `bundle.sh`) publishes the assets the updater expects by name; changing those
+  names is a contract change. The log is guarded by a global mutex because the
+  update thread is a second writer.
 - The panel owns its CAMetalLayer geometry. `panel_sync_layer` sets the
   contents scale, layer frame, and drawable size; it runs whenever the window
   frame changes and again before every `nextDrawable`, because a drawable
@@ -72,8 +83,9 @@ reports runaway CPU and memory and never kills anything.
   events. Events: `started`, `alert` (kind `cpu` or `memory`, name, processes,
   cpu_percent, memory_bytes, sustained_seconds, pids, notified),
   `settings_saved`, `panel_geometry` (a window/drawable size mismatch),
-  `quit`, `notification_authorization`, `notification_failed`. Crash output
-  stays in `~/Library/Logs/hw_activity_monitor.launchd.log`.
+  `quit`, `update_available`, `update_installed`, `update_failed`,
+  `notification_authorization`, `notification_failed`. Crash output stays in
+  `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`
   (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). `proc_pid_rusage`
   supplies both the cumulative CPU times and `ri_phys_footprint`, the memory
