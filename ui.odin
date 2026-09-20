@@ -264,11 +264,7 @@ ui_build_rows :: proc(
 		if trend_index, found := trend_by_name[group.name]; found {
 			trend := trends[trend_index]
 			if stats.window_cpu {
-				row.window_cpu = fmt.aprintf(
-					"avg %s",
-					percent_text(trend.cpu_avg, context.temp_allocator),
-					allocator = allocator,
-				)
+				row.window_cpu = percent_text(trend.cpu_avg, allocator)
 				if len(trend.samples) >= 2 {
 					row.spark = make([]f32, len(trend.samples), allocator)
 					for sample, index in trend.samples {
@@ -320,10 +316,10 @@ ui_build_rows :: proc(
 				pid  = member.pid,
 				rank = index + 1,
 				name = fmt.aprintf(
-					"  %s%s",
+					"%s%s",
 					ui_elide(
 						member.name,
-						max(8, name_chars-2-utf8.rune_count(process_suffix)),
+						max(8, name_chars-PANEL_PROCESS_RANK_CHARS-utf8.rune_count(process_suffix)),
 						context.temp_allocator,
 					),
 					process_suffix,
@@ -342,7 +338,7 @@ ui_build_rows :: proc(
 			append(&rows, Ui_Row{
 				kind = .Note,
 				key  = strings.clone(group.name, allocator),
-				name = fmt.aprintf("  … and %d more", hidden, allocator = allocator),
+				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
 			})
 		}
 	}

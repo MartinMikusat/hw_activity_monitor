@@ -40,7 +40,7 @@ test_ui_rows_group_then_processes :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[1].cpu, "240%")
 	testing.expect_value(t, rows[1].memory, "1.50 GB")
 	testing.expect_value(t, rows[2].kind, Ui_Row_Kind.Process)
-	testing.expect_value(t, rows[2].name, "  hw_clay · 11")
+	testing.expect_value(t, rows[2].name, "hw_clay · 11")
 	testing.expect_value(t, rows[2].pid, i32(11))
 	testing.expect_value(t, rows[2].rank, 1)
 	testing.expect_value(t, rows[2].cpu, "90%")
@@ -69,7 +69,7 @@ test_ui_rows_carry_windowed_stats_and_sparkline :: proc(t: ^testing.T) {
 	rows := ui_build_rows(groups, samples, trends, test_options(5, 1), context.temp_allocator)
 
 	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
-	testing.expect_value(t, rows[1].window_cpu, "avg 20%")
+	testing.expect_value(t, rows[1].window_cpu, "20%")
 	testing.expect_value(t, rows[1].window_memory, "+2.00 GB")
 	testing.expect_value(t, len(rows[1].spark), 2)
 	testing.expect_value(t, rows[1].spark[0], f32(10))
@@ -105,15 +105,15 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	rows := ui_build_rows(groups, samples, nil, test_options(5, 1), context.temp_allocator)
 	// The name column is wide enough for this one now.
 	testing.expect_value(t, rows[1].name, "com.apple.Virtualization.VirtualMachine ×1")
-	testing.expect_value(t, rows[2].name, "  com.apple.Virtualization.VirtualMachine · 5765")
+	testing.expect_value(t, rows[2].name, "com.apple.Virtualization.VirtualMachine · 5765")
 
 	// A name past the budget is elided with an ellipsis.
 	longer := "com.apple.Virtualization.VirtualMachine.Helper.Renderer.Extension"
 	long_samples := []Process_Sample{{pid = 7, name = longer, cpu_fraction = 0.2}}
 	long_groups := group_samples(long_samples)
 	long_rows := ui_build_rows(long_groups, long_samples, nil, test_options(5, 1), context.temp_allocator)
-	testing.expect_value(t, long_rows[1].name, "com.apple.Virtualization.VirtualMachine.Helper.Renderer… ×1")
-	testing.expect_value(t, long_rows[2].name, "  com.apple.Virtualization.VirtualMachine.Helper.Rende… · 7")
+	testing.expect_value(t, long_rows[1].name, "com.apple.Virtualization.VirtualMachine.Helper.Renderer.E… ×1")
+	testing.expect_value(t, long_rows[2].name, "com.apple.Virtualization.VirtualMachine.Helper.Ren… · 7")
 }
 
 @(test)
@@ -134,12 +134,12 @@ test_ui_rows_include_memory_heavy_idle_group :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[1].cpu, "0.1%")
 	testing.expect_value(t, rows[1].memory, "8.00 GB")
 	testing.expect_value(t, rows[2].kind, Ui_Row_Kind.Process)
-	testing.expect_value(t, rows[2].name, "  leak · 2")
+	testing.expect_value(t, rows[2].name, "leak · 2")
 	testing.expect_value(t, rows[2].rank, 1)
 	testing.expect_value(t, rows[3].kind, Ui_Row_Kind.Group)
 	testing.expect_value(t, rows[3].name, "busy ×1")
 	testing.expect_value(t, rows[3].rank, 2)
-	testing.expect_value(t, rows[4].name, "  busy · 1")
+	testing.expect_value(t, rows[4].name, "busy · 1")
 }
 
 @(test)
@@ -189,7 +189,7 @@ test_ui_rows_limit_and_quiet_state :: proc(t: ^testing.T) {
 		testing.expect_value(t, rows[index].kind, Ui_Row_Kind.Process)
 	}
 	testing.expect_value(t, rows[2 + UI_PROCESS_LIMIT_PER_GROUP].kind, Ui_Row_Kind.Note)
-	testing.expect_value(t, rows[2 + UI_PROCESS_LIMIT_PER_GROUP].name, "  … and 2 more")
+	testing.expect_value(t, rows[2 + UI_PROCESS_LIMIT_PER_GROUP].name, "    … and 2 more")
 }
 
 @(test)

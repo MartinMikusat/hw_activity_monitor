@@ -33,11 +33,22 @@ PANEL_FONT_SIZE :: u16(12)
 // the name column.
 PANEL_STAT_CPU_WIDTH :: f32(42)
 PANEL_STAT_MEMORY_WIDTH :: f32(62)
-PANEL_STAT_WINDOW_CPU_WIDTH :: f32(56)
+PANEL_STAT_WINDOW_CPU_WIDTH :: f32(42)
 PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(70)
 PANEL_SPARK_WIDTH :: f32(60)
-// The rank column holds the index number every row carries.
+// The rank column holds the index number on group rows; process rows keep the
+// column empty and put their rank inline, indented, next to the label.
 PANEL_RANK_WIDTH :: f32(22)
+PANEL_PROCESS_RANK_WIDTH :: f32(38)
+PANEL_PROCESS_RANK_CHARS :: 6
+
+// The rank cell's text: the indented inline rank on process rows.
+panel_process_rank_text :: proc(rank: int) -> string {
+	if rank <= 0 {
+		return ""
+	}
+	return fmt.tprintf("    %d", rank)
+}
 // The gap between a row's cells. Kept small so names get the space.
 PANEL_ROW_GAP :: 6
 PANEL_PADDING_HORIZONTAL :: u16(6)
@@ -559,22 +570,34 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			hw_clay.pop_element(ctx)
 			continue
 		}
-		rank_text := row.rank > 0 ? fmt.tprintf("%d", row.rank) : ""
-		rank_font := row.rank > 0 && row.rank <= 4 ? FONT_BOLD : font
+		rank_text := ""
+		if row.kind == .Group {
+			rank_text = row.rank > 0 ? fmt.tprintf("%d", row.rank) : ""
+		}
 		panel_push_text(
 			ctx,
 			rank_text,
-			rank_font,
+			FONT_BODY,
 			panel_rank_text_color(row, palette),
 			{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
 			.Right,
 		)
+		if row.kind == .Process {
+			panel_push_text(
+				ctx,
+				panel_process_rank_text(row.rank),
+				FONT_BODY,
+				panel_rank_text_color(row, palette),
+				{hw_clay.fixed(PANEL_PROCESS_RANK_WIDTH), hw_clay.grow()},
+				.Right,
+			)
+		}
 		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
 		if stats.cpu {
 			panel_push_text(
 				ctx,
 				row.cpu,
-				font,
+				FONT_BODY,
 				palette.text,
 				{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
 				.Right,
@@ -584,7 +607,7 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			panel_push_text(
 				ctx,
 				row.memory,
-				font,
+				FONT_BODY,
 				palette.text,
 				{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
 				.Right,
@@ -594,8 +617,8 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			panel_push_text(
 				ctx,
 				row.window_cpu,
-				font,
-				palette.secondary,
+				FONT_BODY,
+				palette.text,
 				{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
 				.Right,
 			)
@@ -614,8 +637,8 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 			panel_push_text(
 				ctx,
 				row.window_memory,
-				font,
-				palette.secondary,
+				FONT_BODY,
+				palette.text,
 				{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
 				.Right,
 			)
@@ -627,12 +650,12 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 }
 
 panel_row_style :: proc(row: Ui_Row, palette: Panel_Palette) -> (font: ui.Font_Handle, color: hw_clay.Color) {
+	// The list is deliberately all-regular: hierarchy comes from indentation,
+	// the rank column, and the rank highlights, not from weight.
 	switch row.kind {
-	case .Header, .Group:
-		return FONT_BOLD, palette.text
 	case .Note:
 		return FONT_BODY, palette.secondary
-	case .Process:
+	case .Header, .Group, .Process:
 		return FONT_BODY, palette.text
 	}
 	return FONT_BODY, palette.text
