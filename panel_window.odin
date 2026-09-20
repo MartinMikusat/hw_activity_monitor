@@ -274,21 +274,32 @@ panel_window_show :: proc() {
 	ui_sort_now()
 	panel_window_position()
 	panel_window.visible = true
+	panel_window.opening = true
 	if settings.open {
+		// The settings modal appears at once: no fade, no scale. Draw before the
+		// window is on screen so its first composite already has the modal in
+		// it, then draw again after ordering in, when a drawable is certain to
+		// be available.
 		panel.progress = 1
 		panel_window.progress = 1
 		panel_window.animating = false
-		// Fill the layer before the window is ordered in, so its first
-		// composite already shows the modal instead of the last hidden frame.
 		panel_draw()
 	} else {
 		panel.progress = 0
 		panel_window.progress = 0
-		panel_window.opening = true
 		panel_window.animating = true
 	}
 	panel_window.has_time = false
 	msg_void0(window, sel_registerName("makeKeyAndOrderFront:"))
+	if settings.open {
+		panel_draw()
+	}
+	log_event(monitor.log, "panel_show", fmt.tprintf(
+		"\"instant\":%v,\"settings\":%v,\"progress\":%.3f",
+		!panel_window.animating,
+		settings.open,
+		panel.progress,
+	))
 	if panel_window.view != nil {
 		_ = window->makeFirstResponder((^NS.Responder)(panel_window.view))
 	}
@@ -320,10 +331,12 @@ panel_window_hide :: proc() {
 		panel_window.progress = 0
 		msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
 		settings_close()
+		log_event(monitor.log, "panel_hide", "\"instant\":true,\"settings\":true")
 		panel_check_geometry("hide")
 		return
 	}
 	panel_window.animating = true
+	log_event(monitor.log, "panel_hide", "\"instant\":false,\"settings\":false")
 	macos.display_link_set_paused(&panel_window.display_link, false)
 	panel_check_geometry("hide")
 }

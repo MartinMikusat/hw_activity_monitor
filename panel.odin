@@ -138,6 +138,9 @@ Panel :: struct {
 
 panel: Panel
 
+// Temporary diagnostic: whether the last encoded frame showed the settings modal.
+panel_diag_drew_modal: bool
+
 panel_clay_error :: proc(data: hw_clay.Error_Data) {
 	fmt.eprintf("[panel] clay error: %v: %s\n", data.error_type, data.error_text)
 }
@@ -592,6 +595,19 @@ panel_draw :: proc() {
 	command_buffer->commit()
 	panel.draw_dirty = false
 	panel_check_geometry("draw")
+	// Temporary: record the frame that first shows or hides the modal, with the
+	// animation state it was drawn under.
+	modal := settings.open && panel_mode == .Popover
+	if modal != panel_diag_drew_modal {
+		panel_diag_drew_modal = modal
+		log_event(monitor.log, "panel_modal_draw", fmt.tprintf(
+			"\"open\":%v,\"progress\":%.3f,\"animating\":%v,\"height\":%.0f",
+			modal,
+			panel.progress,
+			panel_window.animating,
+			panel.height,
+		))
+	}
 }
 
 // panel_build_tree lays out the tree for the given mode.
