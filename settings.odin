@@ -74,6 +74,7 @@ settings_open :: proc() {
 	settings.message_is_error = false
 	settings.open = true
 	panel_settings_resized()
+	panel_check_geometry("settings_open")
 }
 
 settings_close :: proc() {

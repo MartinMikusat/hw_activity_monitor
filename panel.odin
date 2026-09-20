@@ -234,6 +234,7 @@ panel_content_changed :: proc() {
 	)
 	panel_set_size(panel.width, height)
 	panel_mark_dirty()
+	panel_check_geometry("content_changed")
 }
 
 panel_set_size :: proc(width, height: f32) {
@@ -275,6 +276,66 @@ panel_apply_scroll :: proc(delta_time: f32) {
 	panel.scroll_delta = {0, 0}
 }
 
+// panel_check_geometry reports a window or drawable whose height does not match
+// the layout height: that mismatch is the signature of a stale frame (the
+// content is encoded at one size and presented at another). It logs only when
+// the mismatch changes, so normal use stays silent and a recurrence lands in
+// the event log with the numbers.
+Panel_Geometry :: struct {
+	valid:           bool,
+	tag:             string,
+	height:          f32,
+	window_height:   f32,
+	drawable_height: f32,
+}
+
+panel_geometry_last: Panel_Geometry
+
+panel_check_geometry :: proc(tag: string) {
+	window_height: f32
+	scale := f32(1)
+	if panel.window != nil {
+		frame := panel.window->frame()
+		window_height = f32(frame.size.height)
+		scale = f32(panel.window->backingScaleFactor())
+	}
+	drawable_height: f32
+	if panel.layer != nil {
+		size := panel.layer->drawableSize()
+		drawable_height = f32(size.height)
+	}
+	window_mismatch := abs(window_height-panel.height) > 0.5
+	drawable_mismatch := abs(drawable_height-panel.height*scale) > 1
+	if !window_mismatch && !drawable_mismatch {
+		panel_geometry_last = {valid = true, tag = tag, height = panel.height}
+		return
+	}
+	if panel_geometry_last.valid &&
+	   panel_geometry_last.tag == tag &&
+	   panel_geometry_last.height == panel.height &&
+	   panel_geometry_last.window_height == window_height &&
+	   panel_geometry_last.drawable_height == drawable_height {
+		return
+	}
+	panel_geometry_last = {
+		valid           = true,
+		tag             = tag,
+		height          = panel.height,
+		window_height   = window_height,
+		drawable_height = drawable_height,
+	}
+	log_event(monitor.log, "panel_geometry", fmt.tprintf(
+		"\"tag\":%s,\"panel_height\":%.0f,\"window_height\":%.0f,\"drawable_height\":%.0f,\"visible\":%v,\"animating\":%v,\"settings\":%v",
+		log_string(tag),
+		panel.height,
+		window_height,
+		drawable_height,
+		panel_window.visible,
+		panel_window.animating,
+		settings.open,
+	))
+}
+
 panel_draw :: proc() {
 	if panel.layer == nil || panel.queue == nil {
 		return
@@ -297,6 +358,9 @@ panel_draw :: proc() {
 	}
 	drawable := panel.layer->nextDrawable()
 	if drawable == nil {
+		if panel_window.visible {
+			fmt.eprintln("[panel] draw: no drawable")
+		}
 		return
 	}
 	panel.layer->setContentsScale(NS.Float(scale))
@@ -347,6 +411,7 @@ panel_draw :: proc() {
 	command_buffer->presentDrawable(drawable)
 	command_buffer->commit()
 	panel.draw_dirty = false
+	panel_check_geometry("draw")
 }
 
 panel_build_layout :: proc(

@@ -28,7 +28,11 @@ reports runaway CPU and memory and never kills anything.
   the daemon immediately, so a plain exit is not a quit. Pointer handling and
   click resolution run before the drawable is acquired in `panel_draw`, because
   a click can resize the panel and the frame must be encoded at the size it is
-  presented with.
+  presented with. Settings stay open through the close animation and close only
+  after the window is ordered out, so dismissing the panel never flashes the
+  list. `panel_check_geometry` logs a `panel_geometry` event when the window or
+  drawable height disagrees with the layout height: that mismatch is the
+  signature of a stale frame, and the event keeps the numbers for next time.
 - The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
   Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
   reintroduce AppKit view hierarchies for the panel content: layout, text,
@@ -52,8 +56,9 @@ reports runaway CPU and memory and never kills anything.
   do not turn it into a rewritten snapshot or add high-frequency sampling
   events. Events: `started`, `alert` (kind `cpu` or `memory`, name, processes,
   cpu_percent, memory_bytes, sustained_seconds, pids, notified),
-  `settings_saved`, `notification_authorization`, `notification_failed`. Crash
-  output stays in `~/Library/Logs/hw_activity_monitor.launchd.log`.
+  `settings_saved`, `panel_geometry` (a window/drawable size mismatch),
+  `quit`, `notification_authorization`, `notification_failed`. Crash output
+  stays in `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`
   (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`). `proc_pid_rusage`
   supplies both the cumulative CPU times and `ri_phys_footprint`, the memory

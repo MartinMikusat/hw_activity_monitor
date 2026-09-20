@@ -42,6 +42,9 @@ Panel_Window :: struct {
 	pointer_valid: bool,
 	pointer_down:  bool,
 	click_pending: bool,
+	// Set when the panel hides with settings open: the modal content stays for
+	// the close animation, and settings close once the window is ordered out.
+	close_settings_pending: bool,
 }
 
 panel_window: Panel_Window
@@ -260,13 +263,18 @@ panel_window_show :: proc() {
 	panel_window.animating = true
 	panel_window.visible = true
 	panel_window.has_time = false
+	panel_window.close_settings_pending = false
 	msg_void0(window, sel_registerName("makeKeyAndOrderFront:"))
 	if panel_window.view != nil {
 		_ = window->makeFirstResponder((^NS.Responder)(panel_window.view))
 	}
 	macos.display_link_set_paused(&panel_window.display_link, false)
+	panel_check_geometry("show")
 }
 
+// panel_window_hide closes the panel. Settings stay open through the close
+// animation so the list never flashes mid-dismiss; they close once the window
+// is ordered out.
 panel_window_hide :: proc() {
 	if !panel_window.visible {
 		return
@@ -274,7 +282,9 @@ panel_window_hide :: proc() {
 	if panel_window.animating && !panel_window.opening {
 		return // already closing
 	}
-	settings_close()
+	if settings.open {
+		panel_window.close_settings_pending = true
+	}
 	panel_window.pointer_valid = false
 	panel_window.pointer_down = false
 	panel_window.click_pending = false
@@ -282,6 +292,7 @@ panel_window_hide :: proc() {
 	panel_window.animating = true
 	panel_window.has_time = false
 	macos.display_link_set_paused(&panel_window.display_link, false)
+	panel_check_geometry("hide")
 }
 
 panel_window_is_animating :: proc() -> bool {
@@ -315,6 +326,10 @@ panel_tick :: proc(timestamp: f64) {
 				panel_window.animating = false
 				panel_window.visible = false
 				msg_void_id(panel_window.window, sel_registerName("orderOut:"), nil)
+				if panel_window.close_settings_pending {
+					panel_window.close_settings_pending = false
+					settings_close()
+				}
 			}
 		}
 		panel.progress = panel_window.progress

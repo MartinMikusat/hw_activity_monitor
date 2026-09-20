@@ -142,9 +142,11 @@ Events: `started` (pid and effective config), `ui_ready` (first snapshot
 applied to the menu bar), `alert` (kind `cpu` or `memory`, name, process count,
 group CPU percent, footprint bytes, sustained seconds, pids, whether a banner
 was requested), `settings_saved` (the window, interval, and column selection
-the worker picked up), `notification_authorization` (granted, or the error),
-and `notification_failed` (the API error). Events are rare — one per alert
-episode — so the file is not rotated.
+the worker picked up), `panel_geometry` (a panel window or drawable size that
+disagreed with the layout; the signature of a stale frame), `quit`,
+`notification_authorization` (granted, or the error), and `notification_failed`
+(the API error). Events are rare — one per alert episode — so the file is not
+rotated.
 
 ```sh
 jq -c 'select(.event=="alert")' ~/Library/Logs/hw_activity_monitor.jsonl
