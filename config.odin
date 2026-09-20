@@ -11,19 +11,25 @@ import "core:path/filepath"
 
 Config :: struct {
 	interval_seconds:  f64,
+	window_seconds:    f64,
 	cpu_percent:       f64,
 	memory_mb:         f64,
 	sustained_seconds: f64,
 	cooldown_seconds:  f64,
 	safelist:          []string,
+	show_cpu:          bool,
+	show_memory:       bool,
+	show_window_cpu:   bool,
+	show_window_memory: bool,
 }
 
 // Defaults are tuned for a single-core runaway like a forgotten demo window at
 // 80%: 60% of one core sustained for five minutes, re-alerting every half hour.
-// Compilers are safelisted because building legitimately pegs every core, and
-// VM helpers because a VM holds its assigned RAM and its guest load. The memory
-// budget is an absolute per-group footprint: 4 GB sustained for the same window
-// catches a leak without flagging healthy browser or editor use.
+// The panel's trend columns summarize a ten-minute window by default. Compilers
+// are safelisted because building legitimately pegs every core, and VM helpers
+// because a VM holds its assigned RAM and its guest load. The memory budget is
+// an absolute per-group footprint: 4 GB sustained for the same window catches a
+// leak without flagging healthy browser or editor use.
 DEFAULT_SAFELIST := [?]string{
 	"hw_activity_monitor",
 	"osascript",
@@ -48,11 +54,16 @@ DEFAULT_SAFELIST := [?]string{
 config_defaults :: proc() -> Config {
 	return {
 		interval_seconds  = 5,
+		window_seconds    = 600,
 		cpu_percent       = 60,
 		memory_mb         = 4096,
 		sustained_seconds = 300,
 		cooldown_seconds  = 1800,
 		safelist          = DEFAULT_SAFELIST[:],
+		show_cpu          = true,
+		show_memory       = true,
+		show_window_cpu   = true,
+		show_window_memory = true,
 	}
 }
 
@@ -88,6 +99,7 @@ config_load :: proc(config: ^Config, path: string) {
 config_validate :: proc(config: ^Config) {
 	assert(config != nil, "config required")
 	config.interval_seconds = clamp(config.interval_seconds, 1, 3600)
+	config.window_seconds = clamp(config.window_seconds, 60, 86400)
 	config.cpu_percent = clamp(config.cpu_percent, 1, 100000)
 	if config.memory_mb <= 0 {
 		config.memory_mb = 0 // zero disables memory alerts

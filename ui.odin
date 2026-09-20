@@ -9,6 +9,8 @@ package activity_monitor
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
+import "core:strings"
+import "core:unicode/utf8"
 
 NSVARIABLE_STATUS_ITEM_LENGTH :: -1.0
 
@@ -20,10 +22,32 @@ Ui_Row_Kind :: enum {
 }
 
 Ui_Row :: struct {
-	kind:   Ui_Row_Kind,
-	name:   string,
-	cpu:    string, // stat columns, empty on header and note rows
-	memory: string,
+	kind:          Ui_Row_Kind,
+	name:          string,
+	cpu:           string, // stat columns, empty on header and note rows
+	memory:        string,
+	window_cpu:    string, // "avg 9.0%" over the history window
+	window_memory: string, // "+340.0 MB" growth over the history window
+	spark:         []f32,  // windowed CPU series, oldest first; group rows only
+}
+
+// Stat_Selection is which of the four stat columns the panel shows. Group rows
+// carry all of them; process rows carry instant CPU and memory only, with the
+// window columns left empty so the table stays aligned.
+Stat_Selection :: struct {
+	cpu:           bool,
+	memory:        bool,
+	window_cpu:    bool,
+	window_memory: bool,
+}
+
+config_stat_selection :: proc(config: Config) -> Stat_Selection {
+	return {
+		cpu           = config.show_cpu,
+		memory        = config.show_memory,
+		window_cpu    = config.show_window_cpu,
+		window_memory = config.show_window_memory,
+	}
 }
 
 // Ui_Snapshot owns everything the panel reads; the sampler thread builds one,
@@ -32,6 +56,7 @@ Ui_Snapshot :: struct {
 	allocator:     runtime.Allocator,
 	total_percent: f64,
 	process_count: int,
+	stats:         Stat_Selection,
 	rows:          []Ui_Row,
 }
 
@@ -54,6 +79,25 @@ percent_text :: proc(percent: f64, allocator := context.temp_allocator) -> strin
 	return fmt.aprintf("%.0f%%", percent, allocator = allocator)
 }
 
+// ui_elide shortens a row label to a character budget, ending it with an
+// ellipsis; the result belongs to the caller's allocator.
+ui_elide :: proc(name: string, limit: int, allocator := context.temp_allocator) -> string {
+	if utf8.rune_count(name) <= limit {
+		return strings.clone(name, allocator)
+	}
+	builder := strings.builder_make(allocator)
+	written := 0
+	for character in name {
+		if written >= limit-1 {
+			break
+		}
+		strings.write_rune(&builder, character)
+		written += 1
+	}
+	strings.write_string(&builder, "…")
+	return strings.to_string(builder)
+}
+
 // ui_total_percent reports the sampled CPU as a share of all cores.
 ui_total_percent :: proc(samples: []Process_Sample, cpu_count: int) -> f64 {
 	if cpu_count <= 0 {
@@ -72,24 +116,37 @@ sort_by_cpu :: proc(samples: []Process_Sample) {
 	})
 }
 
+// Ui_Build_Options carries what the row builder needs beyond the samples.
+Ui_Build_Options :: struct {
+	total_percent: f64,
+	process_count: int,
+	stats:         Stat_Selection,
+}
+
 // ui_build_rows renders the panel contents: a header, then each top group with
 // its busiest processes underneath. Groups are shown while they are above the
 // CPU floor or the memory floor, so a memory-heavy but idle process is visible;
-// a group row carries "CPU · memory". Members below both process floors are not
-// counted as hidden; only rows cut by the per-group limit are noted. Every
-// string is allocated with the caller's allocator so snapshots can be freed
-// wholesale.
+// a group row carries the enabled stat columns, including the windowed average
+// CPU, the signed window memory change, and the CPU series for the sparkline.
+// Members below both process floors are not counted as hidden; only rows cut by
+// the per-group limit are noted. Every string and series is allocated with the
+// caller's allocator so snapshots can be freed wholesale.
 ui_build_rows :: proc(
 	groups: []Group_Sample,
 	samples: []Process_Sample,
-	total_percent: f64,
-	process_count: int,
+	trends: []Group_Trend,
+	options: Ui_Build_Options,
 	allocator := context.temp_allocator,
 ) -> []Ui_Row {
 	rows := make([dynamic]Ui_Row, 0, 32, allocator)
 	append(&rows, Ui_Row{
 		kind = .Header,
-		name = fmt.aprintf("%.0f%% of all cores · %d processes", total_percent, process_count, allocator = allocator),
+		name = fmt.aprintf(
+			"%.0f%% of all cores · %d processes",
+			options.total_percent,
+			options.process_count,
+			allocator = allocator,
+		),
 	})
 
 	by_pid := make(map[i32]Process_Sample, len(samples), context.temp_allocator)
@@ -98,6 +155,13 @@ ui_build_rows :: proc(
 		by_pid[sample.pid] = sample
 	}
 
+	trend_by_name := make(map[string]int, len(trends), context.temp_allocator)
+	defer delete(trend_by_name)
+	for trend, index in trends {
+		trend_by_name[trend.name] = index
+	}
+
+	name_chars := panel_name_chars(options.stats)
 	group_count := 0
 	for group in groups {
 		cpu_active := group.cpu_percent >= UI_GROUP_MIN_PERCENT
@@ -109,12 +173,47 @@ ui_build_rows :: proc(
 			break
 		}
 		group_count += 1
-		append(&rows, Ui_Row{
-			kind   = .Group,
-			name   = fmt.aprintf("%s ×%d", group.name, group.count, allocator = allocator),
-			cpu    = percent_text(group.cpu_percent, allocator),
-			memory = format_bytes(group.memory_bytes, allocator),
-		})
+
+		group_suffix := fmt.tprintf(" ×%d", group.count)
+		row := Ui_Row{
+			kind = .Group,
+			name = fmt.aprintf(
+				"%s%s",
+				ui_elide(
+					group.name,
+					max(8, name_chars-utf8.rune_count(group_suffix)),
+					context.temp_allocator,
+				),
+				group_suffix,
+				allocator = allocator,
+			),
+		}
+		if options.stats.cpu {
+			row.cpu = percent_text(group.cpu_percent, allocator)
+		}
+		if options.stats.memory {
+			row.memory = format_bytes(group.memory_bytes, allocator)
+		}
+		if trend_index, found := trend_by_name[group.name]; found {
+			trend := trends[trend_index]
+			if options.stats.window_cpu {
+				row.window_cpu = fmt.aprintf(
+					"avg %s",
+					percent_text(trend.cpu_avg, context.temp_allocator),
+					allocator = allocator,
+				)
+				if len(trend.samples) >= 2 {
+					row.spark = make([]f32, len(trend.samples), allocator)
+					for sample, index in trend.samples {
+						row.spark[index] = f32(sample.cpu_percent)
+					}
+				}
+			}
+			if options.stats.window_memory {
+				row.window_memory = format_bytes_delta(trend.memory_growth, allocator)
+			}
+		}
+		append(&rows, row)
 
 		members := make([dynamic]Process_Sample, 0, len(group.pids), context.temp_allocator)
 		defer delete(members)
@@ -137,12 +236,27 @@ ui_build_rows :: proc(
 		}
 		shown := min(len(eligible), UI_PROCESS_LIMIT_PER_GROUP)
 		for member in eligible[:shown] {
-			append(&rows, Ui_Row{
-				kind   = .Process,
-				name   = fmt.aprintf("    %s · %d", member.name, member.pid, allocator = allocator),
-				cpu    = percent_text(member.cpu_fraction * 100, allocator),
-				memory = format_bytes(member.memory_bytes, allocator),
-			})
+			process_suffix := fmt.tprintf(" · %d", member.pid)
+			process_row := Ui_Row{
+				kind = .Process,
+				name = fmt.aprintf(
+					"    %s%s",
+					ui_elide(
+						member.name,
+						max(8, name_chars-4-utf8.rune_count(process_suffix)),
+						context.temp_allocator,
+					),
+					process_suffix,
+					allocator = allocator,
+				),
+			}
+			if options.stats.cpu {
+				process_row.cpu = percent_text(member.cpu_fraction * 100, allocator)
+			}
+			if options.stats.memory {
+				process_row.memory = format_bytes(member.memory_bytes, allocator)
+			}
+			append(&rows, process_row)
 		}
 		if hidden := len(eligible) - shown; hidden > 0 {
 			append(&rows, Ui_Row{
@@ -226,16 +340,22 @@ ui_status_button_screen_rect :: proc() -> Rect {
 
 // ui_post_snapshot builds one snapshot for the main thread. Sampler thread
 // only: rows and strings belong to the snapshot until the main thread frees it.
-ui_post_snapshot :: proc(total_percent: f64, groups: []Group_Sample, samples: []Process_Sample, process_count: int) {
+ui_post_snapshot :: proc(
+	groups: []Group_Sample,
+	samples: []Process_Sample,
+	trends: []Group_Trend,
+	options: Ui_Build_Options,
+) {
 	if ui_state.app == nil {
 		return // headless fallback: nothing to draw
 	}
-	rows := ui_build_rows(groups, samples, total_percent, process_count, context.allocator)
+	rows := ui_build_rows(groups, samples, trends, options, context.allocator)
 	snapshot := new(Ui_Snapshot, context.allocator)
 	snapshot^ = {
 		allocator     = context.allocator,
-		total_percent = total_percent,
-		process_count = process_count,
+		total_percent = options.total_percent,
+		process_count = options.process_count,
+		stats         = options.stats,
 		rows          = rows,
 	}
 	dispatch_async_f(&_dispatch_main_q, snapshot, ui_apply_snapshot_c)
@@ -278,6 +398,15 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 		}
 		if row.memory != "" {
 			delete(row.memory, snapshot.allocator)
+		}
+		if row.window_cpu != "" {
+			delete(row.window_cpu, snapshot.allocator)
+		}
+		if row.window_memory != "" {
+			delete(row.window_memory, snapshot.allocator)
+		}
+		if len(row.spark) > 0 {
+			delete(row.spark, snapshot.allocator)
 		}
 	}
 	delete(snapshot.rows, snapshot.allocator)

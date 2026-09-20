@@ -21,6 +21,7 @@ Monitor_State :: struct {
 	log:     Log,
 	sampler: Sampler,
 	tracker: Tracker,
+	history: History,
 }
 
 monitor: Monitor_State
@@ -96,6 +97,7 @@ run_app :: proc(config: Config) {
 		cooldown     = time.Duration(config.cooldown_seconds * f64(time.Second)),
 		safelist     = config.safelist,
 	}
+	monitor.history.window = time.Duration(config.window_seconds * f64(time.Second))
 	monitor.log = log_open()
 	backend := notify_init(monitor.log)
 
@@ -147,7 +149,10 @@ run_headless :: proc() {
 monitor_tick :: proc() {
 	samples := sampler_scan(&monitor.sampler)
 	groups := group_samples(samples)
-	alerts := tracker_evaluate(&monitor.tracker, groups, time.tick_now(), monitor.policy)
+	now := time.tick_now()
+	history_append(&monitor.history, groups, now)
+	trends := history_trends(&monitor.history, groups)
+	alerts := tracker_evaluate(&monitor.tracker, groups, now, monitor.policy)
 	for alert in alerts {
 		body := alert_description(alert)
 		notified := notify(alert_title(alert), body)
@@ -163,6 +168,15 @@ monitor_tick :: proc() {
 			notified,
 		))
 	}
-	ui_post_snapshot(ui_total_percent(samples, ui_active_cpu_count()), groups, samples, len(samples))
+	ui_post_snapshot(
+		groups,
+		samples,
+		trends,
+		Ui_Build_Options{
+			total_percent = ui_total_percent(samples, ui_active_cpu_count()),
+			process_count = len(samples),
+			stats = config_stat_selection(monitor.config),
+		},
+	)
 	free_all(context.temp_allocator)
 }

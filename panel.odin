@@ -20,17 +20,20 @@ import metal "ui_framework:metal"
 import QC "vendor:darwin/QuartzCore"
 import MTL "vendor:darwin/Metal"
 
-PANEL_WIDTH :: 440
+PANEL_WIDTH :: 540
 PANEL_MIN_HEIGHT :: 160
 PANEL_MAX_HEIGHT :: 560
 PANEL_ROW_HEIGHT :: f32(20)
 PANEL_FONT_SIZE :: u16(12)
 // Stats columns are fixed width so the CPU and memory values line up
 // vertically across rows. The widths cover the widest realistic text at
-// PANEL_FONT_SIZE (Iosevka at 12 px advances 6 px per character): "2400%" and
-// "1023.9 MB".
+// PANEL_FONT_SIZE (Iosevka at 12 px advances 6 px per character): "2400%",
+// "1023.9 MB", "avg 2400%", and "+1023.9 MB".
 PANEL_STAT_CPU_WIDTH :: f32(46)
 PANEL_STAT_MEMORY_WIDTH :: f32(66)
+PANEL_STAT_WINDOW_CPU_WIDTH :: f32(58)
+PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(78)
+PANEL_SPARK_WIDTH :: f32(72)
 PANEL_PADDING_HORIZONTAL :: u16(6)
 PANEL_PADDING_VERTICAL :: u16(6)
 PANEL_CORNER_RADIUS :: f32(10)
@@ -129,6 +132,82 @@ panel_rows :: proc() -> []Ui_Row {
 	return ui_state.snapshot.rows
 }
 
+// panel_stats reports which stat columns the current snapshot asks for; before
+// the first snapshot, show everything.
+panel_stats :: proc() -> Stat_Selection {
+	if ui_state.snapshot == nil {
+		return {cpu = true, memory = true, window_cpu = true, window_memory = true}
+	}
+	return ui_state.snapshot.stats
+}
+
+// panel_name_chars reports how many characters fit in the name column for a
+// stat selection; row labels are elided to it so long names never collide with
+// the stats. Iosevka advances half the font size per character, and one
+// character is reserved as a margin so a label that exactly fills the column is
+// never cut by the clip.
+panel_name_chars :: proc(stats: Stat_Selection) -> int {
+	fixed: f32
+	columns := 0
+	if stats.cpu {
+		fixed += PANEL_STAT_CPU_WIDTH
+		columns += 1
+	}
+	if stats.memory {
+		fixed += PANEL_STAT_MEMORY_WIDTH
+		columns += 1
+	}
+	if stats.window_cpu {
+		fixed += PANEL_STAT_WINDOW_CPU_WIDTH + PANEL_SPARK_WIDTH
+		columns += 2
+	}
+	if stats.window_memory {
+		fixed += PANEL_STAT_WINDOW_MEMORY_WIDTH
+		columns += 1
+	}
+	width := f32(PANEL_WIDTH-PANEL_PADDING_HORIZONTAL*2) - fixed - f32(columns*8)
+	return int(width / (f32(PANEL_FONT_SIZE) * 0.5)) - 1
+}
+
+// panel_draw_sparklines draws each group's windowed CPU series as a polyline
+// inside the element reserved for it. It runs after the clay commands, inside
+// the same opacity and transform, so the line animates with the panel; the
+// element box comes from clay's layout.
+panel_draw_sparklines :: proc(rows: []Ui_Row, palette: Panel_Palette) {
+	color := hw_clay_ui.color_to_draw(palette.secondary)
+	for row, index in rows {
+		if len(row.spark) < 2 {
+			continue
+		}
+		data := hw_clay.get_element_data(&panel.clay, hw_clay.id_indexed("panel-spark", u32(index)))
+		if !data.found {
+			continue
+		}
+		box := hw_clay_ui.rect_to_draw(&panel.renderer, data.bounding_box)
+		if box.w <= 1 || box.h <= 1 {
+			continue
+		}
+		peak: f32
+		for value in row.spark {
+			peak = max(peak, value)
+		}
+		if peak <= 0 {
+			continue
+		}
+		scale := box.h / peak
+		draw.path_begin(&panel.list)
+		draw.path_move_to(&panel.list, box.x, box.y+row.spark[0]*scale)
+		for value, sample_index in row.spark {
+			if sample_index == 0 {
+				continue
+			}
+			x := box.x + box.w*f32(sample_index)/f32(len(row.spark)-1)
+			draw.path_line_to(&panel.list, x, box.y+value*scale)
+		}
+		draw.path_stroke(&panel.list, color, 1, label = "spark")
+	}
+}
+
 // panel_content_changed recomputes the panel height for the current rows,
 // resizes the window, and redraws if nothing else is driving the clock.
 panel_content_changed :: proc() {
@@ -200,7 +279,9 @@ panel_draw :: proc() {
 	hw_clay.set_pointer_state(&panel.clay, {-1, -1}, false)
 	panel_apply_scroll(PANEL_FRAME_SECONDS)
 	hw_clay.set_layout_dimensions(&panel.clay, {panel.width, panel.height})
-	commands := panel_build_layout(&panel.clay, panel_rows())
+	rows := panel_rows()
+	palette := panel_palette()
+	commands := panel_build_layout(&panel.clay, rows, palette)
 
 	draw.push_opacity(&panel.list, panel_opacity(panel.progress))
 	draw.push_transform(&panel.list, panel_transform(
@@ -211,6 +292,7 @@ panel_draw :: proc() {
 		panel.from.y,
 	))
 	hw_clay_ui.render_commands(&panel.renderer, commands)
+	panel_draw_sparklines(rows, palette)
 	draw.pop_transform(&panel.list)
 	draw.pop_opacity(&panel.list)
 
@@ -234,8 +316,11 @@ panel_draw :: proc() {
 	panel.draw_dirty = false
 }
 
-panel_build_layout :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row) -> []hw_clay.Render_Command {
-	palette := panel_palette()
+panel_build_layout :: proc(
+	ctx: ^hw_clay.Context,
+	rows: []Ui_Row,
+	palette: Panel_Palette,
+) -> []hw_clay.Render_Command {
 	hw_clay.begin_layout(ctx)
 
 	hw_clay.open_element(ctx, hw_clay.id("panel-root"))
@@ -261,6 +346,7 @@ panel_build_layout :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row) -> []hw_clay.R
 		clip   = {vertical = true, child_offset = hw_clay.get_scroll_offset(ctx)},
 	})
 
+	stats := panel_stats()
 	for row, index in rows {
 		hw_clay.open_element(ctx, hw_clay.id_indexed("panel-row", u32(index)))
 		hw_clay.configure_element(ctx, {
@@ -273,8 +359,15 @@ panel_build_layout :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row) -> []hw_clay.R
 
 		font, color := panel_row_style(row, palette)
 		// The name grows so the stats sit against the panel's right padding.
-		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left)
-		if row.cpu != "" {
+		// Every row pushes the same enabled columns, empty where a row has no
+		// value, so the table stays aligned vertically. The header spans the
+		// full width because it has no stats.
+		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+		if row.kind == .Header {
+			hw_clay.pop_element(ctx)
+			continue
+		}
+		if stats.cpu {
 			panel_push_text(
 				ctx,
 				row.cpu,
@@ -283,12 +376,44 @@ panel_build_layout :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row) -> []hw_clay.R
 				{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
 				.Right,
 			)
+		}
+		if stats.memory {
 			panel_push_text(
 				ctx,
 				row.memory,
 				font,
 				palette.text,
 				{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
+				.Right,
+			)
+		}
+		if stats.window_cpu {
+			panel_push_text(
+				ctx,
+				row.window_cpu,
+				font,
+				palette.secondary,
+				{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
+				.Right,
+			)
+			// The sparkline column reserves space for the series drawn after
+			// the clay commands; only group rows carry one.
+			hw_clay.open_element(ctx, hw_clay.id_indexed("panel-spark", u32(index)))
+			hw_clay.configure_element(ctx, {
+				layout = {
+					sizing          = {hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
+					child_alignment = {x = .Center, y = .Center},
+				},
+			})
+			hw_clay.pop_element(ctx)
+		}
+		if stats.window_memory {
+			panel_push_text(
+				ctx,
+				row.window_memory,
+				font,
+				palette.secondary,
+				{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
 				.Right,
 			)
 		}
@@ -316,7 +441,8 @@ panel_row_style :: proc(row: Ui_Row, palette: Panel_Palette) -> (font: ui.Font_H
 // column grows; the fixed-width stat columns pass .Right as the wrapper's
 // child alignment so values line up vertically across rows. Text elements
 // always size to their content, so the wrapper carries the width and
-// alignment.
+// alignment. A clipped wrapper ignores its children's minimum widths and can
+// shrink, which is what lets the growing name column yield space to the stats.
 panel_push_text :: proc(
 	ctx: ^hw_clay.Context,
 	text: string,
@@ -324,6 +450,7 @@ panel_push_text :: proc(
 	color: hw_clay.Color,
 	sizing: hw_clay.Sizing,
 	alignment: hw_clay.Alignment_X,
+	clip_horizontal := false,
 ) {
 	hw_clay.open_element(ctx)
 	hw_clay.configure_element(ctx, {
@@ -331,6 +458,7 @@ panel_push_text :: proc(
 			sizing          = sizing,
 			child_alignment = {x = alignment, y = .Center},
 		},
+		clip   = {horizontal = clip_horizontal},
 	})
 	hw_clay.push_text(ctx, text, {
 		font_id   = u16(font),
