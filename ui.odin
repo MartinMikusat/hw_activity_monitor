@@ -20,9 +20,10 @@ Ui_Row_Kind :: enum {
 }
 
 Ui_Row :: struct {
-	kind:  Ui_Row_Kind,
-	name:  string,
-	value: string,
+	kind:   Ui_Row_Kind,
+	name:   string,
+	cpu:    string, // stat columns, empty on header and note rows
+	memory: string,
 }
 
 // Ui_Snapshot owns everything the panel reads; the sampler thread builds one,
@@ -51,17 +52,6 @@ percent_text :: proc(percent: f64, allocator := context.temp_allocator) -> strin
 		return fmt.aprintf("%.1f%%", percent, allocator = allocator)
 	}
 	return fmt.aprintf("%.0f%%", percent, allocator = allocator)
-}
-
-// metric_text renders one row's metrics as "240% · 3.4 GB". Intermediates live
-// in temporary storage so only the result is charged to allocator.
-metric_text :: proc(cpu_percent: f64, memory_bytes: u64, allocator := context.temp_allocator) -> string {
-	return fmt.aprintf(
-		"%s · %s",
-		percent_text(cpu_percent, context.temp_allocator),
-		format_bytes(memory_bytes, context.temp_allocator),
-		allocator = allocator,
-	)
 }
 
 // ui_total_percent reports the sampled CPU as a share of all cores.
@@ -120,9 +110,10 @@ ui_build_rows :: proc(
 		}
 		group_count += 1
 		append(&rows, Ui_Row{
-			kind  = .Group,
-			name  = fmt.aprintf("%s ×%d", group.name, group.count, allocator = allocator),
-			value = metric_text(group.cpu_percent, group.memory_bytes, allocator),
+			kind   = .Group,
+			name   = fmt.aprintf("%s ×%d", group.name, group.count, allocator = allocator),
+			cpu    = percent_text(group.cpu_percent, allocator),
+			memory = format_bytes(group.memory_bytes, allocator),
 		})
 
 		members := make([dynamic]Process_Sample, 0, len(group.pids), context.temp_allocator)
@@ -147,9 +138,10 @@ ui_build_rows :: proc(
 		shown := min(len(eligible), UI_PROCESS_LIMIT_PER_GROUP)
 		for member in eligible[:shown] {
 			append(&rows, Ui_Row{
-				kind  = .Process,
-				name  = fmt.aprintf("    %s · %d", member.name, member.pid, allocator = allocator),
-				value = metric_text(member.cpu_fraction * 100, member.memory_bytes, allocator),
+				kind   = .Process,
+				name   = fmt.aprintf("    %s · %d", member.name, member.pid, allocator = allocator),
+				cpu    = percent_text(member.cpu_fraction * 100, allocator),
+				memory = format_bytes(member.memory_bytes, allocator),
 			})
 		}
 		if hidden := len(eligible) - shown; hidden > 0 {
@@ -281,8 +273,11 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 		if row.name != "" {
 			delete(row.name, snapshot.allocator)
 		}
-		if row.value != "" {
-			delete(row.value, snapshot.allocator)
+		if row.cpu != "" {
+			delete(row.cpu, snapshot.allocator)
+		}
+		if row.memory != "" {
+			delete(row.memory, snapshot.allocator)
 		}
 	}
 	delete(snapshot.rows, snapshot.allocator)

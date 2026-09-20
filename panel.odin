@@ -25,6 +25,12 @@ PANEL_MIN_HEIGHT :: 160
 PANEL_MAX_HEIGHT :: 560
 PANEL_ROW_HEIGHT :: f32(20)
 PANEL_FONT_SIZE :: u16(12)
+// Stats columns are fixed width so the CPU and memory values line up
+// vertically across rows. The widths cover the widest realistic text at
+// PANEL_FONT_SIZE (Iosevka at 12 px advances 6 px per character): "2400%" and
+// "1023.9 MB".
+PANEL_STAT_CPU_WIDTH :: f32(46)
+PANEL_STAT_MEMORY_WIDTH :: f32(66)
 PANEL_PADDING_HORIZONTAL :: u16(6)
 PANEL_PADDING_VERTICAL :: u16(6)
 PANEL_CORNER_RADIUS :: f32(10)
@@ -266,10 +272,25 @@ panel_build_layout :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row) -> []hw_clay.R
 		})
 
 		font, color := panel_row_style(row, palette)
-		// The name grows so the value sits against the panel's right padding.
-		panel_push_text(ctx, row.name, FONT_BODY, color, grow = true)
-		if row.value != "" {
-			panel_push_text(ctx, row.value, font, palette.text, grow = false)
+		// The name grows so the stats sit against the panel's right padding.
+		panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left)
+		if row.cpu != "" {
+			panel_push_text(
+				ctx,
+				row.cpu,
+				font,
+				palette.text,
+				{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
+				.Right,
+			)
+			panel_push_text(
+				ctx,
+				row.memory,
+				font,
+				palette.text,
+				{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
+				.Right,
+			)
 		}
 		hw_clay.pop_element(ctx)
 	}
@@ -291,28 +312,33 @@ panel_row_style :: proc(row: Ui_Row, palette: Panel_Palette) -> (font: ui.Font_H
 	return FONT_BODY, palette.text
 }
 
+// panel_push_text pushes one text element inside a sized wrapper. The name
+// column grows; the fixed-width stat columns pass .Right as the wrapper's
+// child alignment so values line up vertically across rows. Text elements
+// always size to their content, so the wrapper carries the width and
+// alignment.
 panel_push_text :: proc(
 	ctx: ^hw_clay.Context,
 	text: string,
 	font: ui.Font_Handle,
 	color: hw_clay.Color,
-	grow: bool,
+	sizing: hw_clay.Sizing,
+	alignment: hw_clay.Alignment_X,
 ) {
-	if grow {
-		hw_clay.open_element(ctx)
-		hw_clay.configure_element(ctx, {
-			layout = {sizing = {hw_clay.grow(), hw_clay.grow()}, child_alignment = {y = .Center}},
-		})
-	}
-	hw_clay.push_text(ctx, text, {
-		font_id    = u16(font),
-		font_size  = PANEL_FONT_SIZE,
-		color      = color,
-		wrap_mode  = .None,
+	hw_clay.open_element(ctx)
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing          = sizing,
+			child_alignment = {x = alignment, y = .Center},
+		},
 	})
-	if grow {
-		hw_clay.pop_element(ctx)
-	}
+	hw_clay.push_text(ctx, text, {
+		font_id   = u16(font),
+		font_size = PANEL_FONT_SIZE,
+		color     = color,
+		wrap_mode = .None,
+	})
+	hw_clay.pop_element(ctx)
 }
 
 // panel_palette follows the system appearance; the panel is opaque so it does
