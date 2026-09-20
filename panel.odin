@@ -92,6 +92,17 @@ PANEL_MAXIMIZED_MARGIN :: f64(16)
 
 panel_mode: Panel_Mode = .Popover
 
+// Panel_Layout names the content the panel's current size was computed for. A
+// change of layout resizes the window even while the panel is open; rows
+// appearing or disappearing within the list layout do not.
+Panel_Layout :: enum {
+	Popover,
+	Settings,
+	Maximized,
+}
+
+panel_sized_for: Panel_Layout = .Popover
+
 Panel :: struct {
 	// Surface, created by panel_window.odin.
 	window: ^NS.Panel,
@@ -282,42 +293,38 @@ panel_draw_sparklines :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 panel_draw_charts :: proc(rows: []Ui_Row, palette: Panel_Palette) {
 }
 
-// panel_content_changed recomputes the panel height for the current content,
-// resizes the window, and redraws if nothing else is driving the clock.
 // panel_content_changed resizes the panel for the current content and fills the
 // new frame in the same turn: a resize invalidates the layer's contents, and
 // waiting for the next turn would show a blank panel until the draw lands.
 //
-// With force_resize false, an open popover keeps its height: content updates
-// scroll instead of moving the window. Deliberate size changes (a mode switch)
-// pass true.
-panel_content_changed :: proc(force_resize := false) {
-	if panel_mode == .Maximized {
+// An open panel keeps its size as long as the layout stays the same: rows
+// appearing or disappearing must not move the window, so the list scrolls
+// instead. A change of layout (opening or closing settings, switching modes)
+// resizes even while the panel is open.
+panel_content_changed :: proc() {
+	layout := Panel_Layout.Popover
+	switch {
+	case panel_mode == .Maximized:
+		layout = .Maximized
+	case settings.open:
+		layout = .Settings
+	}
+	if panel_window.visible && layout == panel_sized_for {
+		panel_draw()
+		return
+	}
+	panel_sized_for = layout
+	switch layout {
+	case .Maximized:
 		panel_set_size(panel_maximized_width(), panel_maximized_height())
-		panel_draw()
-		panel_check_geometry("content_changed")
-		return
+	case .Settings:
+		panel_set_size(PANEL_WIDTH, panel_settings_height())
+	case .Popover:
+		// The popover's width is fixed: a mode switch back from maximized must
+		// restore it, or the layout would be laid out in a full-screen-wide
+		// window.
+		panel_set_size(PANEL_WIDTH, panel_popover_height())
 	}
-	if settings.open {
-		panel_settings_resized()
-		return
-	}
-	rows := panel_rows()
-	height := clamp(
-		f32(PANEL_PADDING_VERTICAL * 2) + f32(len(rows)) * PANEL_ROW_HEIGHT,
-		PANEL_MIN_HEIGHT,
-		PANEL_MAX_HEIGHT,
-	)
-	// While the panel is open its height is fixed: a content update must not
-	// move the window, so the list scrolls instead. The next open sizes the
-	// panel afresh for the content it then has.
-	if panel_window.visible && !force_resize {
-		panel_draw()
-		return
-	}
-	// The popover's width is fixed: a mode switch back from maximized must
-	// restore it, or the layout would be laid out in a full-screen-wide window.
-	panel_set_size(PANEL_WIDTH, height)
 	panel_draw()
 	panel_check_geometry("content_changed")
 }
@@ -342,6 +349,25 @@ panel_maximized_height :: proc() -> f32 {
 	return f32(f64(frame.size.height) - PANEL_MAXIMIZED_MARGIN * 2)
 }
 
+// panel_popover_height is the height the list needs for the rows it has now.
+panel_popover_height :: proc() -> f32 {
+	rows := panel_rows()
+	return clamp(
+		f32(PANEL_PADDING_VERTICAL * 2) + f32(len(rows)) * PANEL_ROW_HEIGHT,
+		PANEL_MIN_HEIGHT,
+		PANEL_MAX_HEIGHT,
+	)
+}
+
+// panel_settings_height is the height the settings modal needs.
+panel_settings_height :: proc() -> f32 {
+	return clamp(
+		f32(PANEL_PADDING_VERTICAL*2) + f32(SETTINGS_ROW_COUNT)*PANEL_ROW_HEIGHT,
+		PANEL_MIN_HEIGHT,
+		PANEL_MAX_HEIGHT,
+	)
+}
+
 // panel_begin_mode_switch changes between the popover and the maximized layout.
 // The switch is instant: no cross-fade, no resize animation. The mode is session
 // state, so a restart starts in the popover.
@@ -350,7 +376,7 @@ panel_begin_mode_switch :: proc(mode: Panel_Mode) {
 		return
 	}
 	panel_mode = mode
-	panel_content_changed(true) // a mode switch always resizes, even while open
+	panel_content_changed() // a mode switch changes the layout, so it resizes
 	panel_window_position()
 	panel_mark_dirty()
 }
@@ -791,12 +817,8 @@ panel_push_text :: proc(
 
 // panel_settings_resized sizes the panel for the modal content and redraws.
 panel_settings_resized :: proc() {
-	height := clamp(
-		f32(PANEL_PADDING_VERTICAL*2) + f32(SETTINGS_ROW_COUNT)*PANEL_ROW_HEIGHT,
-		PANEL_MIN_HEIGHT,
-		PANEL_MAX_HEIGHT,
-	)
-	panel_set_size(PANEL_WIDTH, height)
+	panel_sized_for = .Settings
+	panel_set_size(PANEL_WIDTH, panel_settings_height())
 	panel_draw()
 }
 

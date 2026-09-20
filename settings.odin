@@ -73,7 +73,12 @@ settings_open :: proc() {
 	settings.message = ""
 	settings.message_is_error = false
 	settings.open = true
-	panel_settings_resized()
+	if panel_mode == .Popover {
+		panel_settings_resized()
+	} else {
+		// The modal lives in the popover: a maximized panel returns to it.
+		panel_begin_mode_switch(.Popover)
+	}
 	panel_check_geometry("settings_open")
 }
 
