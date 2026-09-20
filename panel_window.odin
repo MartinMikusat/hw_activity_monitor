@@ -269,6 +269,9 @@ panel_window_show :: proc() {
 	if window == nil {
 		return
 	}
+	// Every open starts from the current ranks; the list then stays put until
+	// the operator presses Sort again.
+	ui_sort_now()
 	panel_window_position()
 	panel.progress = 0
 	panel_window.progress = 0
@@ -355,20 +358,9 @@ panel_tick :: proc(timestamp: f64) {
 		panel.progress = panel_window.progress
 	}
 
-	// The mode cross-fade runs independently of the open/close animation.
-	if panel.crossfade != panel.crossfade_target {
-		step := f32(delta) / PANEL_MODE_FADE_SECONDS
-		if panel.crossfade < panel.crossfade_target {
-			panel.crossfade = min(panel.crossfade + step, panel.crossfade_target)
-		} else {
-			panel.crossfade = max(panel.crossfade - step, panel.crossfade_target)
-		}
-	}
-
 	panel_draw()
 
-	if !panel_window.animating && panel.crossfade == panel.crossfade_target &&
-	   timestamp >= panel_window.scroll_until {
+	if !panel_window.animating && timestamp >= panel_window.scroll_until {
 		macos.display_link_set_paused(&panel_window.display_link, true)
 	}
 }

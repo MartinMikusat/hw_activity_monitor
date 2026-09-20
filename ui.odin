@@ -153,6 +153,7 @@ ui_process_urgency :: proc(sample: Process_Sample, config: Config) -> f64 {
 
 Ranked_Group :: struct {
 	group:   Group_Sample,
+	cpu_avg: f64,
 	urgency: f64,
 }
 
@@ -218,6 +219,7 @@ ui_build_rows :: proc(
 		}
 		append(&ranked, Ranked_Group{
 			group   = group,
+			cpu_avg = cpu_avg,
 			urgency = ui_group_urgency(cpu_avg, group.memory_bytes, options.config),
 		})
 	}
@@ -232,7 +234,10 @@ ui_build_rows :: proc(
 	group_count := 0
 	for entry in ranked {
 		group := entry.group
-		cpu_active := group.cpu_percent >= UI_GROUP_MIN_PERCENT
+		// The CPU floor is judged on the windowed average, not the instant
+		// sample: a group hovering at the floor would otherwise flicker in and
+		// out of the list (and resize the panel) every tick.
+		cpu_active := entry.cpu_avg >= UI_GROUP_MIN_PERCENT
 		memory_active := group.memory_bytes >= u64(UI_GROUP_MEMORY_MIN_MB) * (1 << 20)
 		if !cpu_active && !memory_active {
 			continue
