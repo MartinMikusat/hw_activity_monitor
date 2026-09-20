@@ -388,23 +388,60 @@ ui_order_find :: proc(order: ^Panel_Order, name: string) -> int {
 	return -1
 }
 
-// ui_order_adopt rebuilds the order from the ranks carried by the rows: group
-// rows are visited in row order (the builder emits them in rank order) and each
-// group's pids follow their process rows. This is the Sort button's action.
+// ui_order_adopt makes the order match the ranks carried by the rows: the Sort
+// button's action. Groups are ordered by their rank and each group's processes
+// by theirs, so the rows physically move to where the index numbers say they
+// belong.
 ui_order_adopt :: proc(order: ^Panel_Order, rows: []Ui_Row) {
 	assert(order != nil, "order required")
 	ui_order_destroy(order)
+
+	Ranked_Key :: struct {
+		key:  string,
+		rank: int,
+	}
+	keys := make([dynamic]Ranked_Key, 0, 8, context.temp_allocator)
+	defer delete(keys)
 	for row in rows {
 		if row.kind != .Group {
 			continue
 		}
-		entry := Panel_Group_Order{name = strings.clone(row.key), present = true}
-		for candidate in rows {
-			if candidate.kind == .Process && candidate.key == row.key {
-				append(&entry.pids, candidate.pid)
+		known := false
+		for entry in keys {
+			if entry.key == row.key {
+				known = true
+				break
 			}
 		}
-		append(&order.groups, entry)
+		if !known {
+			append(&keys, Ranked_Key{key = row.key, rank = row.rank})
+		}
+	}
+	slice.sort_by(keys[:], proc(a, b: Ranked_Key) -> bool {
+		return a.rank < b.rank
+	})
+
+	for entry in keys {
+		group := Panel_Group_Order{name = strings.clone(entry.key), present = true}
+
+		Ranked_Pid :: struct {
+			pid:  i32,
+			rank: int,
+		}
+		pids := make([dynamic]Ranked_Pid, 0, 4, context.temp_allocator)
+		defer delete(pids)
+		for row in rows {
+			if row.kind == .Process && row.key == entry.key {
+				append(&pids, Ranked_Pid{pid = row.pid, rank = row.rank})
+			}
+		}
+		slice.sort_by(pids[:], proc(a, b: Ranked_Pid) -> bool {
+			return a.rank < b.rank
+		})
+		for ranked in pids {
+			append(&group.pids, ranked.pid)
+		}
+		append(&order.groups, group)
 	}
 }
 

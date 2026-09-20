@@ -256,17 +256,27 @@ test_ui_order_adopt_sorts_to_the_ranks :: proc(t: ^testing.T) {
 	order: Panel_Order
 	defer ui_order_destroy(&order)
 
+	// The stable order is A then B, but the ranks say B belongs first: adopting
+	// the order is what the Sort button does, so it must sort by rank rather
+	// than keep the display order.
 	rows := []Ui_Row{
+		{kind = .Group, key = "A", rank = 2, name = "A"},
+		{kind = .Process, key = "A", pid = 1, rank = 2, name = "a1"},
 		{kind = .Group, key = "B", rank = 1, name = "B"},
 		{kind = .Process, key = "B", pid = 2, rank = 1, name = "b1"},
-		{kind = .Group, key = "A", rank = 2, name = "A"},
-		{kind = .Process, key = "A", pid = 1, rank = 1, name = "a1"},
 	}
 	_ = ui_order_rows(&order, rows, tick_at(0), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, order.groups[0].name, "A")
+
 	ui_order_adopt(&order, rows)
 	testing.expect_value(t, order.groups[0].name, "B")
-	testing.expect_value(t, order.groups[1].name, "A")
 	testing.expect_value(t, order.groups[0].pids[0], i32(2))
+	testing.expect_value(t, order.groups[1].name, "A")
+
+	// The adopted order is what later snapshots are laid out into.
+	ordered := ui_order_rows(&order, rows, tick_at(5), 600*time.Second, context.temp_allocator)
+	testing.expect_value(t, ordered[0].key, "B")
+	testing.expect_value(t, ordered[2].key, "A")
 }
 
 @(test)
