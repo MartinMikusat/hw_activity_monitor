@@ -46,6 +46,12 @@ reports runaway CPU and memory and never kills anything.
   `bundle.sh`) publishes the assets the updater expects by name; changing those
   names is a contract change. The log is guarded by a global mutex because the
   update thread is a second writer.
+- Release only when the operator asks for it. The expected flow for a change is:
+  implement it, commit, install it locally (`./install.sh`) and let the operator
+  confirm the behavior on screen; bump `VERSION` and publish (`./release.sh`)
+  only after that confirmation and only on an explicit request. A published
+  release reaches every installed copy on its next check, so releasing is a
+  distribution decision, not a commit step.
 - The panel owns its CAMetalLayer geometry. `panel_sync_layer` sets the
   contents scale, layer frame, and drawable size; it runs whenever the window
   frame changes and again before every `nextDrawable`, because a drawable
