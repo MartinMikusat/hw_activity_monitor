@@ -23,7 +23,7 @@ import MTL "vendor:darwin/Metal"
 
 PANEL_WIDTH :: 720
 PANEL_MIN_HEIGHT :: 160
-PANEL_MAX_HEIGHT :: 560
+PANEL_MAX_HEIGHT :: 672 // rows: the sticky process rows need more room than the old 560
 PANEL_ROW_HEIGHT :: f32(20)
 PANEL_FONT_SIZE :: u16(12)
 // Stats columns are fixed width so the CPU and memory values line up

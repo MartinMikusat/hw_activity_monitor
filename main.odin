@@ -23,6 +23,7 @@ Monitor_State :: struct {
 	sampler:     Sampler,
 	tracker:     Tracker,
 	history:     History,
+	display:     Ui_Display_State,
 	mutex:       sync.Mutex,
 	pending:     Config,
 	has_pending: bool,
@@ -233,6 +234,8 @@ monitor_tick :: proc() -> f64 {
 			total_percent = ui_total_percent(samples, ui_active_cpu_count()),
 			process_count = len(samples),
 			config        = monitor.config,
+			display       = &monitor.display,
+			now           = now,
 		},
 	)
 	free_all(context.temp_allocator)

@@ -13,8 +13,26 @@ test_stats :: proc() -> Stat_Selection {
 	return {cpu = true, memory = true, window_cpu = true, window_memory = true}
 }
 
-test_options :: proc(total_percent: f64, process_count: int) -> Ui_Build_Options {
-	return {total_percent = total_percent, process_count = process_count, config = config_defaults()}
+test_options :: proc(
+	total_percent: f64,
+	process_count: int,
+	display: ^Ui_Display_State,
+) -> Ui_Build_Options {
+	return {
+		total_percent = total_percent,
+		process_count = process_count,
+		config = config_defaults(),
+		display = display,
+		now = time.tick_now(),
+	}
+}
+
+// test_display returns a fresh display state: a build starts with no sticky
+// rows unless the test carries one across builds.
+test_display :: proc() -> ^Ui_Display_State {
+	state := new(Ui_Display_State)
+	ui_display_init(state)
+	return state
 }
 
 @(test)
@@ -29,7 +47,7 @@ test_ui_rows_group_then_processes :: proc(t: ^testing.T) {
 		{pid = 30, name = "mds", cpu_fraction = 0.001, memory_bytes = 1 << 20},
 	}
 	groups := group_samples(samples)
-	rows := ui_build_rows(groups, samples, nil, test_options(27, 498), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, nil, test_options(27, 498, test_display()), context.temp_allocator)
 
 	testing.expect_value(t, rows[0].kind, Ui_Row_Kind.Header)
 	testing.expect_value(t, rows[0].name, "27% of all cores · 498 processes")
@@ -66,7 +84,7 @@ test_ui_rows_carry_windowed_stats_and_sparkline :: proc(t: ^testing.T) {
 	samples := []Process_Sample{{pid = 7, name = "leak", cpu_fraction = 0.3, memory_bytes = 3 << 30}}
 	groups := group_samples(samples)
 	trends := history_trends(&history, groups)
-	rows := ui_build_rows(groups, samples, trends, test_options(5, 1), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, trends, test_options(5, 1, test_display()), context.temp_allocator)
 
 	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
 	testing.expect_value(t, rows[1].window_cpu, "20%")
@@ -85,7 +103,7 @@ test_ui_rows_honor_the_stat_selection :: proc(t: ^testing.T) {
 	samples := []Process_Sample{{pid = 1, name = "busy", cpu_fraction = 0.5, memory_bytes = 1 << 30}}
 	groups := group_samples(samples)
 
-	options := test_options(10, 1)
+	options := test_options(10, 1, test_display())
 	options.config.show_cpu = false
 	options.config.show_memory = false
 	options.config.show_window_memory = false
@@ -102,7 +120,7 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	long := "com.apple.Virtualization.VirtualMachine"
 	samples := []Process_Sample{{pid = 5765, name = long, cpu_fraction = 0.2, memory_bytes = 4 << 30}}
 	groups := group_samples(samples)
-	rows := ui_build_rows(groups, samples, nil, test_options(5, 1), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, nil, test_options(5, 1, test_display()), context.temp_allocator)
 	// The name column is wide enough for this one now.
 	testing.expect_value(t, rows[1].name, "com.apple.Virtualization.VirtualMachine ×1")
 	testing.expect_value(t, rows[2].name, "com.apple.Virtualization.VirtualMachine · 5765")
@@ -111,7 +129,7 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	longer := "com.apple.Virtualization.VirtualMachine.Helper.Renderer.Extension"
 	long_samples := []Process_Sample{{pid = 7, name = longer, cpu_fraction = 0.2}}
 	long_groups := group_samples(long_samples)
-	long_rows := ui_build_rows(long_groups, long_samples, nil, test_options(5, 1), context.temp_allocator)
+	long_rows := ui_build_rows(long_groups, long_samples, nil, test_options(5, 1, test_display()), context.temp_allocator)
 	testing.expect_value(t, long_rows[1].name, "com.apple.Virtualization.VirtualMachine.Helper.Renderer.E… ×1")
 	testing.expect_value(t, long_rows[2].name, "com.apple.Virtualization.VirtualMachine.Helper.Ren… · 7")
 }
@@ -124,7 +142,7 @@ test_ui_rows_include_memory_heavy_idle_group :: proc(t: ^testing.T) {
 		{pid = 2, name = "leak", cpu_fraction = 0.001, memory_bytes = 8 << 30},
 	}
 	groups := group_samples(samples)
-	rows := ui_build_rows(groups, samples, nil, test_options(10, 2), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, nil, test_options(10, 2, test_display()), context.temp_allocator)
 
 	// Combined urgency ranks the 8 GB group above the busy one.
 	testing.expect_value(t, len(rows), 5)
@@ -157,7 +175,7 @@ test_ui_rows_rank_by_cumulative_urgency :: proc(t: ^testing.T) {
 	}
 	groups := group_samples(samples)
 	trends := history_trends(&history, groups)
-	rows := ui_build_rows(groups, samples, trends, test_options(60, 2), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, trends, test_options(60, 2, test_display()), context.temp_allocator)
 
 	// The leak's footprint is twice its budget; the hog uses 50 of 60 CPU.
 	testing.expect_value(t, rows[1].key, "leak")
@@ -171,7 +189,7 @@ test_ui_rows_rank_by_cumulative_urgency :: proc(t: ^testing.T) {
 @(test)
 test_ui_rows_limit_and_quiet_state :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	quiet := ui_build_rows(nil, nil, nil, test_options(0, 12), context.temp_allocator)
+	quiet := ui_build_rows(nil, nil, nil, test_options(0, 12, test_display()), context.temp_allocator)
 	testing.expect_value(t, len(quiet), 2)
 	testing.expect_value(t, quiet[1].kind, Ui_Row_Kind.Note)
 	testing.expect_value(t, quiet[1].name, "All quiet")
@@ -181,7 +199,7 @@ test_ui_rows_limit_and_quiet_state :: proc(t: ^testing.T) {
 		samples[index] = {pid = i32(100 + index), name = "hog", cpu_fraction = 0.5}
 	}
 	groups := group_samples(samples)
-	rows := ui_build_rows(groups, samples, nil, test_options(50, len(samples)), context.temp_allocator)
+	rows := ui_build_rows(groups, samples, nil, test_options(50, len(samples), test_display()), context.temp_allocator)
 	testing.expect_value(t, rows[0].kind, Ui_Row_Kind.Header)
 	testing.expect_value(t, rows[1].kind, Ui_Row_Kind.Group)
 	testing.expect_value(t, rows[1].name, "hog ×6")
@@ -379,7 +397,7 @@ test_snapshot_round_trip_frees_cleanly :: proc(t: ^testing.T) {
 		{pid = 20, name = "Brave Browser", cpu_fraction = 0.3, memory_bytes = 256 << 20},
 	}
 	groups := group_samples(samples)
-	options := test_options(42, len(samples))
+	options := test_options(42, len(samples), test_display())
 	rows := ui_build_rows(groups, samples, nil, options, context.allocator)
 	snapshot := new(Ui_Snapshot, context.allocator)
 	snapshot^ = {
@@ -394,8 +412,74 @@ test_snapshot_round_trip_frees_cleanly :: proc(t: ^testing.T) {
 
 @(test)
 test_snapshot_round_trip_quiet_state :: proc(t: ^testing.T) {
-	rows := ui_build_rows(nil, nil, nil, test_options(0, 12), context.allocator)
+	rows := ui_build_rows(nil, nil, nil, test_options(0, 12, test_display()), context.allocator)
 	snapshot := new(Ui_Snapshot, context.allocator)
 	snapshot^ = {allocator = context.allocator, rows = rows}
 	ui_snapshot_destroy(snapshot)
+}
+
+@(test)
+test_ui_rows_keep_process_rows_once_shown :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state := test_display()
+	options := test_options(10, 3, state)
+
+	// Two members earn rows on their footprint, a third stays below both floors.
+	first := []Process_Sample{
+		{pid = 10, name = "helper", cpu_fraction = 0.001, memory_bytes = 600 << 20},
+		{pid = 30, name = "helper", cpu_fraction = 0.001, memory_bytes = 1500 << 20},
+		{pid = 40, name = "helper", cpu_fraction = 0.001, memory_bytes = 100 << 20},
+	}
+	rows := ui_build_rows(group_samples(first), first, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(rows), 4) // header, group, two rows
+	testing.expect_value(t, rows[2].pid, i32(30)) // ranked by footprint
+	testing.expect_value(t, rows[3].pid, i32(10))
+
+	// pid 10 goes quiet: its row stays.
+	second := []Process_Sample{
+		{pid = 10, name = "helper", cpu_fraction = 0.001, memory_bytes = 400 << 20},
+		{pid = 30, name = "helper", cpu_fraction = 0.001, memory_bytes = 1500 << 20},
+		{pid = 40, name = "helper", cpu_fraction = 0.001, memory_bytes = 100 << 20},
+	}
+	rows = ui_build_rows(group_samples(second), second, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(rows), 4)
+	testing.expect_value(t, rows[3].pid, i32(10))
+
+	// pid 10 exits: the group keeps two rows, filled by the next-ranked member.
+	third := []Process_Sample{
+		{pid = 30, name = "helper", cpu_fraction = 0.001, memory_bytes = 1500 << 20},
+		{pid = 40, name = "helper", cpu_fraction = 0.001, memory_bytes = 100 << 20},
+	}
+	rows = ui_build_rows(group_samples(third), third, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(rows), 4)
+	testing.expect_value(t, rows[2].pid, i32(30))
+	testing.expect_value(t, rows[3].pid, i32(40))
+}
+
+@(test)
+test_ui_rows_note_stays_once_shown :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state := test_display()
+	options := test_options(60, 6, state)
+
+	busy := make([]Process_Sample, 6, context.temp_allocator)
+	for index in 0 ..< 6 {
+		busy[index] = {pid = i32(100 + index), name = "worker", cpu_fraction = 0.05, memory_bytes = 600 << 20}
+	}
+	rows := ui_build_rows(group_samples(busy), busy, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(rows), 7) // header, group, four rows, note
+	testing.expect_value(t, rows[6].kind, Ui_Row_Kind.Note)
+	testing.expect_value(t, rows[6].name, "    … and 2 more")
+
+	// Only one member is busy now: the four rows stay (sticky) and so does the
+	// note, so the list keeps its height.
+	quiet := make([]Process_Sample, 6, context.temp_allocator)
+	for index in 0 ..< 6 {
+		quiet[index] = {pid = i32(100 + index), name = "worker", cpu_fraction = 0.001, memory_bytes = 100 << 20}
+	}
+	quiet[0].memory_bytes = 1500 << 20
+	rows = ui_build_rows(group_samples(quiet), quiet, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(rows), 7)
+	testing.expect_value(t, rows[6].kind, Ui_Row_Kind.Note)
+	testing.expect_value(t, rows[6].name, "")
 }

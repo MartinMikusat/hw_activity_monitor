@@ -167,6 +167,113 @@ Ui_Build_Options :: struct {
 	total_percent: f64,
 	process_count: int,
 	config:        Config, // the snapshot carries it for the settings modal
+	display:       ^Ui_Display_State,
+	now:           time.Tick,
+}
+
+// Ui_Display_State keeps the list from shifting as processes cross the display
+// floors. A process that has been given a row keeps it while it lives, and a
+// group that has grown to N process rows keeps N slots, so rows are added but
+// never taken away for going quiet; a row freed by an exit is filled from the
+// group's next-ranked process. The state belongs to the sampler thread and is
+// carried into every build; entries are dropped once their group has been gone
+// for the history window.
+Ui_Display_State :: struct {
+	groups: map[string]Ui_Display_Group,
+}
+
+Ui_Display_Group :: struct {
+	// The pids with a row now, in rank order, the high-water number of rows,
+	// whether a "… and N more" note has been shown, and when the group was last
+	// seen above the group floor.
+	pids: [dynamic]i32,
+	rows: int,
+	note: bool,
+	seen: time.Tick,
+}
+
+ui_display_init :: proc(state: ^Ui_Display_State) {
+	if state.groups == nil {
+		state.groups = make(map[string]Ui_Display_Group)
+	}
+}
+
+ui_display_destroy :: proc(state: ^Ui_Display_State) {
+	for name, group in state.groups {
+		delete(group.pids)
+		delete(name)
+	}
+	delete(state.groups)
+	state.groups = nil
+}
+
+// ui_display_group returns the group's entry, creating it on first sight.
+ui_display_group :: proc(state: ^Ui_Display_State, name: string) -> ^Ui_Display_Group {
+	ui_display_init(state)
+	if entry, found := &state.groups[name]; found {
+		return entry
+	}
+	key := strings.clone(name)
+	state.groups[key] = Ui_Display_Group{}
+	return &state.groups[key]
+}
+
+// ui_display_prune drops the entries of groups that have been gone longer than
+// the history window.
+ui_display_prune :: proc(state: ^Ui_Display_State, now: time.Tick, window: time.Duration) {
+	if state.groups == nil {
+		return
+	}
+	stale := make([dynamic]string, 0, len(state.groups), context.temp_allocator)
+	defer delete(stale)
+	for name, group in state.groups {
+		if time.tick_diff(group.seen, now) > window {
+			append(&stale, name)
+		}
+	}
+	for name in stale {
+		if group, found := state.groups[name]; found {
+			delete(group.pids)
+			delete(name)
+		}
+		delete_key(&state.groups, name)
+	}
+}
+
+// ui_display_remember records the rows a group is showing.
+ui_display_remember :: proc(display: ^Ui_Display_Group, selected: []Process_Sample) {
+	clear(&display.pids)
+	for member in selected {
+		append(&display.pids, member.pid)
+	}
+	display.rows = max(display.rows, len(selected))
+}
+
+// ui_selected_contains is whether a pid already has a row in this build.
+ui_selected_contains :: proc(selected: []Process_Sample, pid: i32) -> bool {
+	for member in selected {
+		if member.pid == pid {
+			return true
+		}
+	}
+	return false
+}
+
+ui_display_contains :: proc(pids: []i32, pid: i32) -> bool {
+	for candidate in pids {
+		if candidate == pid {
+			return true
+		}
+	}
+	return false
+}
+
+// ui_process_eligible is whether a process earns a row on its own, by the
+// instant CPU or the footprint floor.
+ui_process_eligible :: proc(sample: Process_Sample, config: Config) -> bool {
+	cpu_active := sample.cpu_fraction * 100 >= UI_PROCESS_MIN_PERCENT
+	memory_active := sample.memory_bytes >= u64(UI_PROCESS_MEMORY_MIN_MB) * (1 << 20)
+	return cpu_active || memory_active
 }
 
 // ui_build_rows renders the panel contents: a header, then each top group with
@@ -175,8 +282,11 @@ Ui_Build_Options :: struct {
 // a group row carries the enabled stat columns, including the windowed average
 // CPU, the signed window memory change, and the CPU series for the sparkline.
 // Members below both process floors are not counted as hidden; only rows cut by
-// the per-group limit are noted. Every string and series is allocated with the
-// caller's allocator so snapshots can be freed wholesale.
+// the per-group limit are noted. Rows are sticky through options.display: a
+// process that has had a row keeps it, and a group keeps the row count it has
+// grown to, so the list does not shift as processes cross the floors. Every
+// string and series is allocated with the caller's allocator so snapshots can be
+// freed wholesale.
 ui_build_rows :: proc(
 	groups: []Group_Sample,
 	samples: []Process_Sample,
@@ -186,6 +296,7 @@ ui_build_rows :: proc(
 ) -> []Ui_Row {
 	rows := make([dynamic]Ui_Row, 0, 32, allocator)
 	stats := config_stat_selection(options.config)
+	ui_display_prune(options.display, options.now, time.Duration(options.config.window_seconds*f64(time.Second)))
 	append(&rows, Ui_Row{
 		kind = .Header,
 		name = fmt.aprintf(
@@ -312,15 +423,41 @@ ui_build_rows :: proc(
 		eligible := make([dynamic]Process_Sample, 0, len(ranked_members), context.temp_allocator)
 		defer delete(eligible)
 		for member in ranked_members {
-			cpu_member := member.sample.cpu_fraction * 100 >= UI_PROCESS_MIN_PERCENT
-			memory_member := member.sample.memory_bytes >= u64(UI_PROCESS_MEMORY_MIN_MB) * (1 << 20)
-			if !cpu_member && !memory_member {
-				continue
+			if ui_process_eligible(member.sample, options.config) {
+				append(&eligible, member.sample)
 			}
-			append(&eligible, member.sample)
 		}
-		shown := min(len(eligible), UI_PROCESS_LIMIT_PER_GROUP)
-		for member, index in eligible[:shown] {
+
+		// Sticky rows: a process that has had a row keeps it while it lives, and
+		// the group keeps the number of rows it has grown to, so processes
+		// crossing the floors add rows but do not take them away.
+		display := ui_display_group(options.display, group.name)
+		display.seen = options.now
+		selected := make([dynamic]Process_Sample, 0, len(ranked_members), context.temp_allocator)
+		defer delete(selected)
+		for member in ranked_members {
+			if len(selected) >= UI_PROCESS_LIMIT_PER_GROUP {
+				break
+			}
+			if ui_process_eligible(member.sample, options.config) || ui_display_contains(display.pids[:], member.sample.pid) {
+				append(&selected, member.sample)
+			}
+		}
+		// A row freed by an exit is filled from the ranked members, so the
+		// group's row count stays where it was.
+		target := min(UI_PROCESS_LIMIT_PER_GROUP, max(display.rows, len(selected)))
+		target = min(target, len(ranked_members))
+		for member in ranked_members {
+			if len(selected) >= target {
+				break
+			}
+			if !ui_selected_contains(selected[:], member.sample.pid) {
+				append(&selected, member.sample)
+			}
+		}
+		ui_display_remember(display, selected[:])
+
+		for member, index in selected {
 			process_suffix := fmt.tprintf(" · %d", member.pid)
 			process_row := Ui_Row{
 				kind = .Process,
@@ -346,11 +483,27 @@ ui_build_rows :: proc(
 			}
 			append(&rows, process_row)
 		}
-		if hidden := len(eligible) - shown; hidden > 0 {
+		eligible_shown := 0
+		for member in selected {
+			if ui_process_eligible(member, options.config) {
+				eligible_shown += 1
+			}
+		}
+		hidden := len(eligible) - eligible_shown
+		if hidden > 0 {
+			display.note = true
+		}
+		if display.note {
+			// Sticky too: the note keeps its row even when nothing is hidden,
+			// so its appearance does not shift the list.
+			name := ""
+			if hidden > 0 {
+				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator)
+			}
 			append(&rows, Ui_Row{
 				kind = .Note,
 				key  = strings.clone(group.name, allocator),
-				name = fmt.aprintf("    … and %d more", hidden, allocator = allocator),
+				name = name,
 			})
 		}
 	}

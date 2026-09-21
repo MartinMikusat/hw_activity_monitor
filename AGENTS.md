@@ -88,8 +88,15 @@ reports runaway CPU and memory and never kills anything.
 - `core:thread.create` returns a *suspended* thread: always follow it with
   `thread.start`; a second argument to `create` is the priority, not user data.
 - Panel rows come from `ui_build_rows` (ui.odin), which is pure apart from its
-  allocator and covered by `ui_test.odin`. Only rows cut by the per-group limit
-  get a "… and N more" note.
+  allocator, the display state it carries forward, and the clock passed in, and
+  is covered by `ui_test.odin`. Only rows cut by the per-group limit get a
+  "… and N more" note. Rows are sticky through `Ui_Display_State` (sampler-thread
+  state in `Monitor_State`): a process that has had a row keeps it while it
+  lives, and a group keeps the high-water number of process rows, filled from
+  its ranked members when a row is freed by an exit, so the list does not shift
+  as processes cross the display floors. The note is sticky too. Entries are
+  pruned once their group has been gone for the history window, and the popover's
+  height cap leaves room for the extra rows.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the
