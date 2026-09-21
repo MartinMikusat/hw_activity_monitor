@@ -101,7 +101,10 @@ reports runaway CPU and memory and never kills anything.
   its ranked members when a row is freed by an exit, so the list does not shift
   as processes cross the display floors. The note is sticky too. Entries are
   pruned once their group has been gone for the history window, and the popover's
-  height cap leaves room for the extra rows.
+  height cap leaves room for the extra rows. A labels row under the header names
+  the stat columns: it pushes the same cells as the data rows (and, in the
+  maximized view, the same label and chart columns as a block) so every label
+  lines up with the values under it.
 - Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the

@@ -181,6 +181,43 @@ panel_maximized_block_spans_its_chart :: proc(t: ^testing.T) {
 	testing.expect_value(t, spacer.y, axis.y)
 }
 
+panel_test_box_id :: proc(t: ^testing.T, name: string) -> hw_clay.Bounding_Box {
+	data := hw_clay.get_element_data(&panel.clay, hw_clay.id(name))
+	if !testing.expectf(t, data.found, "%s not found", name) {
+		return {}
+	}
+	return data.bounding_box
+}
+
+@(test)
+panel_labels_line_up_with_their_columns :: proc(t: ^testing.T) {
+	if !panel_test_layout(t) {
+		return
+	}
+	defer panel_test_layout_destroy()
+
+	rows := panel_test_rows()
+	_ = panel_build_tree(&panel.clay, rows, panel_test_palette(), .Maximized)
+
+	// The labels row reserves the same columns as a block, so every label sits
+	// over the values it names.
+	labels := panel_test_box_id(t, "panel-labels")
+	testing.expect_value(t, labels.height, PANEL_ROW_HEIGHT)
+	rows_cell := panel_test_box_id(t, "panel-labels-rows")
+	values := panel_test_box_id(t, "panel-labels-values")
+	chart := panel_test_box_id(t, "panel-labels-chart")
+	block_rows := panel_test_box(t, "panel-block-rows", 1)
+	block_chart := panel_test_box(t, "panel-chart-column", 1)
+	testing.expect_value(t, rows_cell.width, block_rows.width)
+	testing.expect_value(t, values.width, PANEL_CHART_LABEL_WIDTH)
+	testing.expect_value(t, chart.width, block_chart.width)
+	testing.expect_value(t, chart.x, block_chart.x)
+
+	// The popover carries the same labels over its sparkline column.
+	_ = panel_build_tree(&panel.clay, rows, panel_test_palette(), .Popover)
+	testing.expect_value(t, panel_test_box_id(t, "panel-labels").height, PANEL_ROW_HEIGHT)
+}
+
 @(test)
 panel_maximized_chart_series_scales_to_its_own_peak :: proc(t: ^testing.T) {
 	if !panel_test_layout(t) {

@@ -712,6 +712,7 @@ panel_build_rows_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palette: Pa
 	for row, index in rows {
 		if row.kind == .Header {
 			panel_push_list_header(ctx, row, palette, .Popover)
+			panel_push_list_labels(ctx, palette, .Popover)
 			continue
 		}
 		panel_push_data_row(ctx, row, index, palette, .Popover)
@@ -745,6 +746,123 @@ panel_push_list_header :: proc(
 		panel_push_button(ctx, hw_clay.id("settings-gear"), "Settings", palette)
 	}
 	hw_clay.pop_element(ctx)
+}
+
+// panel_push_list_labels pushes the column labels row. The cells carry the same
+// widths and alignment as the data rows, so every label sits over its values.
+// The maximized dashboard also reserves the label and chart columns, so its
+// labels line up with the blocks under them.
+panel_push_list_labels :: proc(ctx: ^hw_clay.Context, palette: Panel_Palette, mode: Panel_Mode) {
+	stats := panel_stats()
+	hw_clay.open_element(ctx, hw_clay.id("panel-labels"))
+	hw_clay.configure_element(ctx, {
+		layout = {
+			sizing           = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
+			layout_direction = mode == .Maximized ? .Left_To_Right : .Top_To_Bottom,
+			child_alignment  = {y = .Center},
+			child_gap        = mode == .Maximized ? PANEL_CHART_GAP : PANEL_ROW_GAP,
+		},
+	})
+
+	if mode == .Maximized {
+		hw_clay.open_element(ctx, hw_clay.id("panel-labels-rows"))
+		hw_clay.configure_element(ctx, {
+			layout = {
+				sizing           = {hw_clay.grow(), hw_clay.grow()},
+				layout_direction = .Left_To_Right,
+				child_alignment  = {y = .Center},
+				child_gap        = PANEL_ROW_GAP,
+			},
+		})
+		panel_push_stat_labels(ctx, stats, palette, false)
+		hw_clay.pop_element(ctx)
+
+		// Empty cells keep the label and chart columns the blocks' width.
+		hw_clay.open_element(ctx, hw_clay.id("panel-labels-values"))
+		hw_clay.configure_element(ctx, {
+			layout = {sizing = {hw_clay.fixed(PANEL_CHART_LABEL_WIDTH), hw_clay.grow()}},
+		})
+		hw_clay.pop_element(ctx)
+		hw_clay.open_element(ctx, hw_clay.id("panel-labels-chart"))
+		hw_clay.configure_element(ctx, {
+			layout = {sizing = {hw_clay.fixed(panel_chart_column_width(panel.width)), hw_clay.grow()}},
+		})
+		hw_clay.pop_element(ctx)
+	} else {
+		panel_push_stat_labels(ctx, stats, palette, true)
+	}
+
+	hw_clay.pop_element(ctx)
+}
+
+// panel_push_stat_labels pushes the stat column labels, in the order and widths
+// the data rows use.
+panel_push_stat_labels :: proc(
+	ctx: ^hw_clay.Context,
+	stats: Stat_Selection,
+	palette: Panel_Palette,
+	spark: bool,
+) {
+	window := panel_window_text(panel_window_seconds())
+	panel_push_text(
+		ctx,
+		"#",
+		FONT_BODY,
+		palette.secondary,
+		{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
+		.Right,
+	)
+	panel_push_text(ctx, "Process", FONT_BODY, palette.secondary, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	if stats.cpu {
+		panel_push_text(
+			ctx,
+			"CPU",
+			FONT_BODY,
+			palette.secondary,
+			{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	if stats.memory {
+		panel_push_text(
+			ctx,
+			"Memory",
+			FONT_BODY,
+			palette.secondary,
+			{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	if stats.window_cpu {
+		panel_push_text(
+			ctx,
+			fmt.tprintf("%s CPU", window),
+			FONT_BODY,
+			palette.secondary,
+			{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+		if spark {
+			panel_push_text(
+				ctx,
+				window,
+				FONT_BODY,
+				palette.secondary,
+				{hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
+				.Right,
+			)
+		}
+	}
+	if stats.window_memory {
+		panel_push_text(
+			ctx,
+			fmt.tprintf("%s Mem", window),
+			FONT_BODY,
+			palette.secondary,
+			{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
 }
 
 // panel_push_data_row pushes one group, process, or note row. The spark column
@@ -901,6 +1019,7 @@ panel_build_maximized_list :: proc(ctx: ^hw_clay.Context, rows: []Ui_Row, palett
 	for index < len(rows) {
 		if rows[index].kind == .Header {
 			panel_push_list_header(ctx, rows[index], palette, .Maximized)
+			panel_push_list_labels(ctx, palette, .Maximized)
 			index += 1
 			continue
 		}
@@ -1458,10 +1577,10 @@ panel_palette :: proc() -> Panel_Palette {
 			field       = {40, 40, 44, 255},
 			field_focus = {56, 56, 62, 255},
 			error       = {235, 118, 118, 255},
-			rank_red        = {225, 70, 70, 54},
-			rank_red_text   = {255, 138, 138, 255},
-			rank_yellow     = {225, 180, 70, 46},
-			rank_yellow_text = {248, 208, 120, 255},
+			rank_red        = {235, 66, 66, 104},
+			rank_red_text   = {255, 148, 148, 255},
+			rank_yellow     = {238, 188, 70, 92},
+			rank_yellow_text = {252, 214, 128, 255},
 		}
 	}
 	return {
@@ -1472,10 +1591,10 @@ panel_palette :: proc() -> Panel_Palette {
 		field       = {236, 236, 240, 255},
 		field_focus = {224, 224, 230, 255},
 		error       = {190, 60, 60, 255},
-		rank_red        = {220, 60, 60, 46},
-		rank_red_text   = {186, 32, 32, 255},
-		rank_yellow     = {226, 176, 50, 52},
-		rank_yellow_text = {150, 112, 10, 255},
+		rank_red        = {218, 48, 48, 96},
+		rank_red_text   = {168, 20, 20, 255},
+		rank_yellow     = {230, 172, 36, 104},
+		rank_yellow_text = {134, 94, 0, 255},
 	}
 }
 
