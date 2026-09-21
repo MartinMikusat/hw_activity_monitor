@@ -758,7 +758,7 @@ panel_push_list_labels :: proc(ctx: ^hw_clay.Context, palette: Panel_Palette, mo
 	hw_clay.configure_element(ctx, {
 		layout = {
 			sizing           = {hw_clay.grow(), hw_clay.fixed(PANEL_ROW_HEIGHT)},
-			layout_direction = mode == .Maximized ? .Left_To_Right : .Top_To_Bottom,
+			layout_direction = .Left_To_Right,
 			child_alignment  = {y = .Center},
 			child_gap        = mode == .Maximized ? PANEL_CHART_GAP : PANEL_ROW_GAP,
 		},
@@ -811,8 +811,17 @@ panel_push_stat_labels :: proc(
 		palette.secondary,
 		{hw_clay.fixed(PANEL_RANK_WIDTH), hw_clay.grow()},
 		.Right,
+		id = hw_clay.id("panel-label-rank"),
 	)
-	panel_push_text(ctx, "Process", FONT_BODY, palette.secondary, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	panel_push_text(
+		ctx,
+		"Process",
+		FONT_BODY,
+		palette.secondary,
+		{hw_clay.grow(), hw_clay.grow()},
+		.Left,
+		id = hw_clay.id("panel-label-name"),
+	)
 	if stats.cpu {
 		panel_push_text(
 			ctx,
@@ -821,6 +830,7 @@ panel_push_stat_labels :: proc(
 			palette.secondary,
 			{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
 			.Right,
+			id = hw_clay.id("panel-label-cpu"),
 		)
 	}
 	if stats.memory {
@@ -831,6 +841,7 @@ panel_push_stat_labels :: proc(
 			palette.secondary,
 			{hw_clay.fixed(PANEL_STAT_MEMORY_WIDTH), hw_clay.grow()},
 			.Right,
+			id = hw_clay.id("panel-label-memory"),
 		)
 	}
 	if stats.window_cpu {
@@ -841,6 +852,7 @@ panel_push_stat_labels :: proc(
 			palette.secondary,
 			{hw_clay.fixed(PANEL_STAT_WINDOW_CPU_WIDTH), hw_clay.grow()},
 			.Right,
+			id = hw_clay.id("panel-label-window-cpu"),
 		)
 		if spark {
 			panel_push_text(
@@ -850,6 +862,7 @@ panel_push_stat_labels :: proc(
 				palette.secondary,
 				{hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
 				.Right,
+				id = hw_clay.id("panel-label-spark"),
 			)
 		}
 	}
@@ -861,6 +874,7 @@ panel_push_stat_labels :: proc(
 			palette.secondary,
 			{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
 			.Right,
+			id = hw_clay.id("panel-label-window-memory"),
 		)
 	}
 }
@@ -1253,8 +1267,9 @@ panel_push_text :: proc(
 	sizing: hw_clay.Sizing,
 	alignment: hw_clay.Alignment_X,
 	clip_horizontal := false,
+	id: hw_clay.Element_Id = {},
 ) {
-	hw_clay.open_element(ctx)
+	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
 		layout = {
 			sizing          = sizing,

@@ -213,9 +213,26 @@ panel_labels_line_up_with_their_columns :: proc(t: ^testing.T) {
 	testing.expect_value(t, chart.width, block_chart.width)
 	testing.expect_value(t, chart.x, block_chart.x)
 
-	// The popover carries the same labels over its sparkline column.
+	// The popover carries the same labels over its sparkline column, laid out as
+	// one row: each label must sit to the right of the one before it.
 	_ = panel_build_tree(&panel.clay, rows, panel_test_palette(), .Popover)
 	testing.expect_value(t, panel_test_box_id(t, "panel-labels").height, PANEL_ROW_HEIGHT)
+	rank := panel_test_box_id(t, "panel-label-rank")
+	name := panel_test_box_id(t, "panel-label-name")
+	cpu := panel_test_box_id(t, "panel-label-cpu")
+	memory := panel_test_box_id(t, "panel-label-memory")
+	window_cpu := panel_test_box_id(t, "panel-label-window-cpu")
+	spark := panel_test_box_id(t, "panel-label-spark")
+	window_memory := panel_test_box_id(t, "panel-label-window-memory")
+	testing.expect(t, name.x > rank.x, "Process must follow #")
+	testing.expect(t, cpu.x > name.x, "CPU must follow Process")
+	testing.expect(t, memory.x > cpu.x, "Memory must follow CPU")
+	testing.expect(t, window_cpu.x > memory.x, "the window CPU label must follow Memory")
+	testing.expect(t, spark.x > window_cpu.x, "the spark label must follow the window CPU label")
+	testing.expect(t, window_memory.x > spark.x, "the window memory label must follow the spark label")
+	for box, index in ([]hw_clay.Bounding_Box{rank, name, cpu, memory, window_cpu, spark, window_memory}) {
+		testing.expectf(t, box.y == rank.y, "label %d is on a different row (%.1f vs %.1f)", index, box.y, rank.y)
+	}
 }
 
 @(test)
