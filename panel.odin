@@ -855,21 +855,25 @@ panel_push_stat_labels :: proc(
 			id = hw_clay.id("panel-label-window-cpu"),
 		)
 		if spark {
+			// The series column is a graph, so its label is centered over it
+			// rather than aligned like a number.
 			panel_push_text(
 				ctx,
-				window,
+				"CPU trend",
 				FONT_BODY,
 				palette.secondary,
 				{hw_clay.fixed(PANEL_SPARK_WIDTH), hw_clay.grow()},
-				.Right,
+				.Center,
 				id = hw_clay.id("panel-label-spark"),
 			)
 		}
 	}
 	if stats.window_memory {
+		// "Mem change", not "10m Mem": the value is a signed change over the
+		// window, and a window prefix reads like another level, not a delta.
 		panel_push_text(
 			ctx,
-			fmt.tprintf("%s Mem", window),
+			"Mem change",
 			FONT_BODY,
 			palette.secondary,
 			{hw_clay.fixed(PANEL_STAT_WINDOW_MEMORY_WIDTH), hw_clay.grow()},
