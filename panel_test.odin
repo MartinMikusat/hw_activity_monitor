@@ -26,6 +26,16 @@ panel_chart_column_is_a_third_of_the_content :: proc(t: ^testing.T) {
 }
 
 @(test)
+theme_resolves_against_the_system :: proc(t: ^testing.T) {
+	testing.expect_value(t, theme_is_dark(.Light, true), false)
+	testing.expect_value(t, theme_is_dark(.Light, false), false)
+	testing.expect_value(t, theme_is_dark(.Dark, false), true)
+	testing.expect_value(t, theme_is_dark(.Dark, true), true)
+	testing.expect_value(t, theme_is_dark(.System, true), true)
+	testing.expect_value(t, theme_is_dark(.System, false), false)
+}
+
+@(test)
 panel_window_text_names_the_window :: proc(t: ^testing.T) {
 	testing.expect_value(t, panel_window_text(30), "30s")
 	testing.expect_value(t, panel_window_text(600), "10m")

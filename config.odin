@@ -11,6 +11,14 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
+// Theme is the panel's color scheme. System follows the menu bar's appearance,
+// so a light panel can sit under a light menu bar and vice versa.
+Theme :: enum {
+	System,
+	Light,
+	Dark,
+}
+
 Config :: struct {
 	interval_seconds:  f64,
 	window_seconds:    f64,
@@ -24,6 +32,7 @@ Config :: struct {
 	show_window_cpu:   bool,
 	show_window_memory: bool,
 	auto_update:       bool,
+	theme:             Theme,
 }
 
 // Defaults are tuned for a single-core runaway like a forgotten demo window at
@@ -68,6 +77,7 @@ config_defaults :: proc() -> Config {
 		show_window_cpu   = true,
 		show_window_memory = true,
 		auto_update       = true,
+		theme             = .System,
 	}
 }
 
@@ -130,13 +140,20 @@ config_apply_fields :: proc(config: ^Config, window_minutes, interval_seconds: s
 	return true
 }
 
+// CONFIG_JSON_OPTIONS keeps the file readable and hand-editable: enums are
+// written by name, so it says "theme": "Light" rather than an ordinal.
+CONFIG_JSON_OPTIONS :: json.Marshal_Options {
+	pretty         = true,
+	use_enum_names = true,
+}
+
 // config_save writes the whole config as JSON, creating the config directory
 // when it does not exist yet. The daemon reads the file at startup, so this is
 // also the durable record of a settings change.
 config_save :: proc(config: Config, path: string) -> bool {
 	assert(path != "", "config path required")
 	_ = os.make_directory_all(filepath.dir(path))
-	data, marshal_err := json.marshal(config, {pretty = true}, context.temp_allocator)
+	data, marshal_err := json.marshal(config, CONFIG_JSON_OPTIONS, context.temp_allocator)
 	if marshal_err != nil {
 		return false
 	}

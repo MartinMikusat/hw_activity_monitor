@@ -252,6 +252,18 @@ settings_click :: proc(id: hw_clay.Element_Id) -> bool {
 		settings.draft.show_window_memory = !settings.draft.show_window_memory
 		panel_mark_dirty()
 		return true
+	case id == hw_clay.id("theme-system"):
+		settings.draft.theme = .System
+		panel_mark_dirty()
+		return true
+	case id == hw_clay.id("theme-light"):
+		settings.draft.theme = .Light
+		panel_mark_dirty()
+		return true
+	case id == hw_clay.id("theme-dark"):
+		settings.draft.theme = .Dark
+		panel_mark_dirty()
+		return true
 	case id == hw_clay.id("settings-save"):
 		settings_save()
 		return true

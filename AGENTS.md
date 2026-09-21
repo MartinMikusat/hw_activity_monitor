@@ -13,7 +13,12 @@ reports runaway CPU and memory and never kills anything.
   Never sample or touch AppKit off the main thread; if `ui_start` fails,
   `run_headless` keeps alerting with no UI.
 - Settings live in `settings.odin`: the in-panel modal edits the history window,
-  the sampling interval, and the four stat columns. Saving writes config.json
+  the sampling interval, the four stat columns, and the theme (`System`, `Light`,
+  `Dark`). The panel resolves the theme from the settings draft while the modal
+  is open, so a choice previews at once, and from the running config otherwise;
+  `config.json` stores it by name (`CONFIG_JSON_OPTIONS.use_enum_names`), and the
+  status item keeps following the menu bar's own appearance rather than the
+  panel's theme. Saving writes config.json
   and calls `monitor_request_config`, which stages the config under a mutex;
   the worker applies it at the start of its next tick, so the main thread never
   blocks and the history survives. `monitor.config` and `monitor.policy` are

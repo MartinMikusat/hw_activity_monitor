@@ -71,7 +71,7 @@ UI_GROUP_MEMORY_MIN_MB :: 1024
 UI_PROCESS_LIMIT_PER_GROUP :: 4
 UI_PROCESS_MIN_PERCENT :: 1.0
 UI_PROCESS_MEMORY_MIN_MB :: 512
-SETTINGS_ROW_COUNT :: 9
+SETTINGS_ROW_COUNT :: 10
 SETTINGS_FIELD_WIDTH :: f32(90)
 SETTINGS_BUTTON_WIDTH :: f32(64)
 FONT_BODY :: ui.Font_Handle(1)
@@ -1262,20 +1262,23 @@ panel_push_button :: proc(
 	id: hw_clay.Element_Id,
 	label: string,
 	palette: Panel_Palette,
+	selected := false,
 ) {
-	hovered := panel_hovered(id)
+	// A selected button stays inverted, so the active choice reads like the
+	// current segment of a segmented control.
+	inverted := panel_hovered(id) || selected
 	hw_clay.open_element(ctx, id)
 	hw_clay.configure_element(ctx, {
 		layout = {
 			sizing          = {hw_clay.fit(), hw_clay.fit()},
 			child_alignment = {x = .Center, y = .Center},
 		},
-		background_color = hovered ? palette.text : hw_clay.Color{},
+		background_color = inverted ? palette.text : hw_clay.Color{},
 	})
 	hw_clay.push_text(ctx, fmt.tprintf("[%s]", label), {
 		font_id   = u16(FONT_BODY),
 		font_size = PANEL_FONT_SIZE,
-		color     = hovered ? palette.background : palette.text,
+		color     = inverted ? palette.background : palette.text,
 		wrap_mode = .None,
 	})
 	hw_clay.pop_element(ctx)
@@ -1311,6 +1314,14 @@ panel_settings_rows :: proc(ctx: ^hw_clay.Context, palette: Panel_Palette) {
 		settings.editing.active_field == settings_field_id(.Interval),
 		palette,
 	)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_text(ctx, "Theme", FONT_BODY, palette.text, {hw_clay.grow(), hw_clay.grow()}, .Left)
+	panel_push_button(ctx, hw_clay.id("theme-system"), "System", palette, settings.draft.theme == .System)
+	panel_push_button(ctx, hw_clay.id("theme-light"), "Light", palette, settings.draft.theme == .Light)
+	panel_push_button(ctx, hw_clay.id("theme-dark"), "Dark", palette, settings.draft.theme == .Dark)
 	hw_clay.pop_element(ctx)
 	row_index += 1
 
@@ -1468,7 +1479,38 @@ panel_palette :: proc() -> Panel_Palette {
 	}
 }
 
+// panel_theme is the theme the panel draws with: the settings draft while the
+// modal is open, so picking one previews at once, and the running config
+// otherwise.
+panel_theme :: proc() -> Theme {
+	if settings.open {
+		return settings.draft.theme
+	}
+	if ui_state.snapshot != nil {
+		return ui_state.snapshot.config.theme
+	}
+	return .System
+}
+
+// theme_is_dark resolves a theme against the system's appearance.
+theme_is_dark :: proc(theme: Theme, system_dark: bool) -> bool {
+	switch theme {
+	case .Light:
+		return false
+	case .Dark:
+		return true
+	case .System:
+		return system_dark
+	}
+	return system_dark
+}
+
 panel_is_dark :: proc() -> bool {
+	return theme_is_dark(panel_theme(), panel_system_is_dark())
+}
+
+// panel_system_is_dark reads the menu bar's appearance.
+panel_system_is_dark :: proc() -> bool {
 	app := msg_id0(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
 	if app == nil {
 		return true

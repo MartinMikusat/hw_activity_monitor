@@ -387,7 +387,10 @@ test_panel_settings_paints_only_the_root :: proc(t: ^testing.T) {
 		case hw_clay.Text_Render_Data, hw_clay.Image_Render_Data, hw_clay.Custom_Render_Data, hw_clay.Border_Render_Data, hw_clay.Clip_Render_Data, hw_clay.Overlay_Color_Render_Data:
 		}
 	}
-	testing.expect_value(t, painted, 1)
+	// The root, plus the fill of the selected theme segment: the settings rows
+	// themselves paint nothing, which is what keeps border_all's separator lines
+	// out of the modal.
+	testing.expect_value(t, painted, 2)
 }
 
 @(test)
