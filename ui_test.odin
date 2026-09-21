@@ -486,3 +486,32 @@ test_ui_rows_note_stays_once_shown :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[6].kind, Ui_Row_Kind.Note)
 	testing.expect_value(t, rows[6].name, "")
 }
+
+@(test)
+test_ui_display_prunes_a_group_after_the_window :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state := test_display()
+	options := test_options(10, 1, state)
+
+	samples := []Process_Sample {
+		{pid = 10, name = "helper", cpu_fraction = 0.2, memory_bytes = 600 << 20},
+	}
+	_ = ui_build_rows(group_samples(samples), samples, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(state.groups), 1)
+
+	// A build with the group gone and the window elapsed drops its entry, key
+	// and all.
+	options.now = time.tick_add(options.now, time.Duration(options.config.window_seconds*f64(time.Second)) + time.Second)
+	_ = ui_build_rows(nil, nil, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(state.groups), 0)
+
+	// A group still present keeps its entry, so its sticky rows survive.
+	_ = ui_build_rows(group_samples(samples), samples, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(state.groups), 1)
+	options.now = time.tick_add(options.now, time.Duration(options.config.window_seconds*f64(time.Second)) + time.Second)
+	_ = ui_build_rows(group_samples(samples), samples, nil, options, context.temp_allocator)
+	testing.expect_value(t, len(state.groups), 1)
+
+	ui_display_destroy(state)
+	free(state)
+}

@@ -232,11 +232,16 @@ ui_display_prune :: proc(state: ^Ui_Display_State, now: time.Tick, window: time.
 		}
 	}
 	for name in stale {
-		if group, found := state.groups[name]; found {
-			delete(group.pids)
-			delete(name)
+		group, found := state.groups[name]
+		if !found {
+			continue
 		}
-		delete_key(&state.groups, name)
+		delete(group.pids)
+		// Odin's maps store the key they were given, so its memory is freed
+		// here: delete_key hands the stored key back, and only then is it safe
+		// to free. Freeing it first would leave delete_key hashing freed bytes.
+		deleted, _ := delete_key(&state.groups, name)
+		delete(deleted)
 	}
 }
 
