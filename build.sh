@@ -5,6 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ODIN_LIBS=$(CDPATH= cd -- "$ROOT/../odin_libraries" && pwd)
 BUILD="$ROOT/build"
 mkdir -p "$BUILD"
+# The app embeds this precompiled shader library (shaders.odin).
+sh "$ODIN_LIBS/hw_odin_ui_framework/scripts/build-metallib.sh" "$BUILD/ui.metallib"
 cd "$BUILD"
 
 MODE=${1:-release}

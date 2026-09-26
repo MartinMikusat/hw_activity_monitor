@@ -159,7 +159,12 @@ panel_setup_renderer :: proc(layer: ^QC.MetalLayer, device: ^MTL.Device, queue: 
 	panel.width = PANEL_WIDTH
 	panel.height = PANEL_MIN_HEIGHT
 
-	if !metal.renderer_init(&panel.gpu, rawptr(device), "", uint(MTL.PixelFormat.BGRA8Unorm), true) {
+	if !metal.renderer_init(
+		&panel.gpu,
+		rawptr(device),
+		pixel_format = uint(MTL.PixelFormat.BGRA8Unorm),
+		metallib_data = UI_METALLIB,
+	) {
 		return false
 	}
 	coretext.context_init(&panel.text)
