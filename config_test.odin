@@ -31,4 +31,5 @@ config_theme_round_trips_by_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, loaded.theme, Theme.Light)
 	testing.expect_value(t, loaded.interval_seconds, f64(5))
 	testing.expect_value(t, loaded.show_cpu, true)
+	testing.expect_value(t, loaded.show_gpu, true)
 }

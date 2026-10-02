@@ -38,6 +38,7 @@ Ui_Row :: struct {
 	rank:          int,    // 1-based: group rank, or rank inside its group
 	name:          string,
 	cpu:           string, // stat columns, empty on header and note rows
+	gpu:           string,
 	memory:        string,
 	window_cpu:    string, // "avg 9.0%" over the history window
 	window_memory: string, // "+340.0 MB" growth over the history window
@@ -47,11 +48,12 @@ Ui_Row :: struct {
 	memory_peak:   u64,    // windowed footprint peak
 }
 
-// Stat_Selection is which of the four stat columns the panel shows. Group rows
+// Stat_Selection is which of the five stat columns the panel shows. Group rows
 // carry all of them; process rows carry instant CPU and memory only, with the
 // window columns left empty so the table stays aligned.
 Stat_Selection :: struct {
 	cpu:           bool,
+	gpu:           bool,
 	memory:        bool,
 	window_cpu:    bool,
 	window_memory: bool,
@@ -60,6 +62,7 @@ Stat_Selection :: struct {
 config_stat_selection :: proc(config: Config) -> Stat_Selection {
 	return {
 		cpu           = config.show_cpu,
+		gpu           = config.show_gpu,
 		memory        = config.show_memory,
 		window_cpu    = config.show_window_cpu,
 		window_memory = config.show_window_memory,
@@ -382,6 +385,17 @@ ui_build_rows :: proc(
 		if stats.cpu {
 			row.cpu = percent_text(group.cpu_percent, allocator)
 		}
+		if stats.gpu {
+			// The group's GPU load is its members' current GPU time; the history
+			// tracks CPU and memory only.
+			group_gpu: f64
+			for pid in group.pids {
+				if sample, found := by_pid[pid]; found {
+					group_gpu += sample.gpu_fraction
+				}
+			}
+			row.gpu = percent_text(group_gpu * 100, allocator)
+		}
 		if stats.memory {
 			row.memory = format_bytes(group.memory_bytes, allocator)
 		}
@@ -482,6 +496,9 @@ ui_build_rows :: proc(
 			}
 			if stats.cpu {
 				process_row.cpu = percent_text(member.cpu_fraction * 100, allocator)
+			}
+			if stats.gpu {
+				process_row.gpu = percent_text(member.gpu_fraction * 100, allocator)
 			}
 			if stats.memory {
 				process_row.memory = format_bytes(member.memory_bytes, allocator)
@@ -958,6 +975,9 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 		}
 		if row.cpu != "" {
 			delete(row.cpu, snapshot.allocator)
+		}
+		if row.gpu != "" {
+			delete(row.gpu, snapshot.allocator)
 		}
 		if row.memory != "" {
 			delete(row.memory, snapshot.allocator)

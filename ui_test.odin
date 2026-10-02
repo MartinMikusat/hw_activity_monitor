@@ -95,6 +95,17 @@ test_ui_rows_carry_windowed_stats_and_sparkline :: proc(t: ^testing.T) {
 	// Process rows carry no window data.
 	testing.expect_value(t, rows[2].window_cpu, "")
 	testing.expect_value(t, len(rows[2].spark), 0)
+
+	// The GPU column carries the group's summed GPU load and the process's own.
+	gpu_samples := []Process_Sample{
+		{pid = 7, name = "leak", cpu_fraction = 0.3, gpu_fraction = 0.25, memory_bytes = 3 << 30},
+		{pid = 8, name = "leak", cpu_fraction = 0.1, gpu_fraction = 0.5, memory_bytes = 3 << 30},
+	}
+	gpu_groups := group_samples(gpu_samples)
+	gpu_rows := ui_build_rows(gpu_groups, gpu_samples, nil, test_options(5, 1, test_display()), context.temp_allocator)
+	testing.expect_value(t, gpu_rows[1].gpu, "75%")
+	testing.expect_value(t, gpu_rows[2].gpu, "25%")
+	testing.expect_value(t, gpu_rows[3].gpu, "50%")
 }
 
 @(test)
@@ -105,12 +116,15 @@ test_ui_rows_honor_the_stat_selection :: proc(t: ^testing.T) {
 
 	options := test_options(10, 1, test_display())
 	options.config.show_cpu = false
+	options.config.show_gpu = false
 	options.config.show_memory = false
 	options.config.show_window_memory = false
 	rows := ui_build_rows(groups, samples, nil, options, context.temp_allocator)
 	testing.expect_value(t, rows[1].cpu, "")
+	testing.expect_value(t, rows[1].gpu, "")
 	testing.expect_value(t, rows[1].memory, "")
 	testing.expect_value(t, rows[2].cpu, "")
+	testing.expect_value(t, rows[2].gpu, "")
 	testing.expect_value(t, rows[2].memory, "")
 }
 
@@ -130,8 +144,8 @@ test_ui_rows_elide_long_names :: proc(t: ^testing.T) {
 	long_samples := []Process_Sample{{pid = 7, name = longer, cpu_fraction = 0.2}}
 	long_groups := group_samples(long_samples)
 	long_rows := ui_build_rows(long_groups, long_samples, nil, test_options(5, 1, test_display()), context.temp_allocator)
-	testing.expect_value(t, long_rows[1].name, "com.apple.Virtualization.VirtualMachine.Helper.Renderer.E… ×1")
-	testing.expect_value(t, long_rows[2].name, "com.apple.Virtualization.VirtualMachine.Helper.Ren… · 7")
+	testing.expect_value(t, long_rows[1].name, "com.apple.Virtualization.VirtualMachine.Helper.Re… ×1")
+	testing.expect_value(t, long_rows[2].name, "com.apple.Virtualization.VirtualMachine.He… · 7")
 }
 
 @(test)

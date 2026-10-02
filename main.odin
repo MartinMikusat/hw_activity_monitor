@@ -65,10 +65,11 @@ monitor_apply_pending_config :: proc() {
 	monitor.history.window = time.Duration(monitor.pending.window_seconds * f64(time.Second))
 	monitor.has_pending = false
 	log_event(monitor.log, "settings_saved", fmt.tprintf(
-		"\"window_seconds\":%.0f,\"interval_seconds\":%.0f,\"show_cpu\":%v,\"show_memory\":%v,\"show_window_cpu\":%v,\"show_window_memory\":%v",
+		"\"window_seconds\":%.0f,\"interval_seconds\":%.0f,\"show_cpu\":%v,\"show_gpu\":%v,\"show_memory\":%v,\"show_window_cpu\":%v,\"show_window_memory\":%v",
 		monitor.config.window_seconds,
 		monitor.config.interval_seconds,
 		monitor.config.show_cpu,
+		monitor.config.show_gpu,
 		monitor.config.show_memory,
 		monitor.config.show_window_cpu,
 		monitor.config.show_window_memory,

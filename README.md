@@ -60,7 +60,7 @@ order from the last sort is kept and new groups are appended at the bottom. The
 panel sizes itself to the list, up to a maximum height, then scrolls.
 
 The **Settings** button in the panel header opens an in-panel modal that edits
-the history window, the sampling interval, and which of the four stat columns
+the history window, the sampling interval, and which of the five stat columns
 the rows show. Saving writes
 `~/Library/Application Support/hw_activity_monitor/config.json` and stages the
 change for the worker, which picks it up on its next tick — the accumulated
@@ -122,8 +122,8 @@ their default):
   Defaults cover compilers and VM helpers because builds legitimately peg every
   core and a VM holds its assigned RAM. `hw_activity_monitor` itself is always
   safelisted.
-- `show_*` keys pick the panel's four stat columns: instant CPU, instant
-  memory, windowed CPU average, and windowed memory change.
+- `show_*` keys pick the panel's five stat columns: instant CPU, instant GPU,
+  instant memory, windowed CPU average, and windowed memory change.
 - `auto_update` lets the installed app update itself from GitHub releases;
   `false` keeps it on the installed build until you run `./install.sh` again.
 

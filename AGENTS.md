@@ -13,7 +13,7 @@ reports runaway CPU and memory and never kills anything.
   Never sample or touch AppKit off the main thread; if `ui_start` fails,
   `run_headless` keeps alerting with no UI.
 - Settings live in `settings.odin`: the in-panel modal edits the history window,
-  the sampling interval, the four stat columns, and the theme (`System`, `Light`,
+  the sampling interval, the five stat columns, and the theme (`System`, `Light`,
   `Dark`). The panel resolves the theme from the settings draft while the modal
   is open, so a choice previews at once, and from the running config otherwise;
   `config.json` stores it by name (`CONFIG_JSON_OPTIONS.use_enum_names`), and the
@@ -105,7 +105,8 @@ reports runaway CPU and memory and never kills anything.
   the stat columns: it pushes the same cells as the data rows (and, in the
   maximized view, the same label and chart columns as a block) so every label
   lines up with the values under it.
-- Design: `sampler.odin` (libproc), `rules.odin` (pure rule engine,
+- Design: `sampler.odin` (libproc), `gpu.odin` (IORegistry GPU time per pid,
+  `gpu_test.odin` drives the real registry), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the
   minimal `~/Applications/hw_activity_monitor.app` bundle and loads the agent.

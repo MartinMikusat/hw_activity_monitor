@@ -240,6 +240,10 @@ settings_click :: proc(id: hw_clay.Element_Id) -> bool {
 		settings.draft.show_cpu = !settings.draft.show_cpu
 		panel_mark_dirty()
 		return true
+	case id == hw_clay.id("check-gpu"):
+		settings.draft.show_gpu = !settings.draft.show_gpu
+		panel_mark_dirty()
+		return true
 	case id == hw_clay.id("check-memory"):
 		settings.draft.show_memory = !settings.draft.show_memory
 		panel_mark_dirty()

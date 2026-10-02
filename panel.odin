@@ -32,6 +32,7 @@ PANEL_FONT_SIZE :: u16(12)
 // "1023.9 MB", "avg 2400%", and "+1023.9 MB". Everything left over belongs to
 // the name column.
 PANEL_STAT_CPU_WIDTH :: f32(42)
+PANEL_STAT_GPU_WIDTH :: f32(42)
 PANEL_STAT_MEMORY_WIDTH :: f32(62)
 PANEL_STAT_WINDOW_CPU_WIDTH :: f32(42)
 PANEL_STAT_WINDOW_MEMORY_WIDTH :: f32(70)
@@ -213,6 +214,10 @@ panel_name_chars :: proc(stats: Stat_Selection) -> int {
 	columns := 0
 	if stats.cpu {
 		fixed += PANEL_STAT_CPU_WIDTH
+		columns += 1
+	}
+	if stats.gpu {
+		fixed += PANEL_STAT_GPU_WIDTH
 		columns += 1
 	}
 	if stats.memory {
@@ -838,6 +843,17 @@ panel_push_stat_labels :: proc(
 			id = hw_clay.id("panel-label-cpu"),
 		)
 	}
+	if stats.gpu {
+		panel_push_text(
+			ctx,
+			"GPU",
+			FONT_BODY,
+			palette.secondary,
+			{hw_clay.fixed(PANEL_STAT_GPU_WIDTH), hw_clay.grow()},
+			.Right,
+			id = hw_clay.id("panel-label-gpu"),
+		)
+	}
 	if stats.memory {
 		panel_push_text(
 			ctx,
@@ -944,6 +960,16 @@ panel_push_data_row :: proc(
 			FONT_BODY,
 			palette.text,
 			{hw_clay.fixed(PANEL_STAT_CPU_WIDTH), hw_clay.grow()},
+			.Right,
+		)
+	}
+	if stats.gpu {
+		panel_push_text(
+			ctx,
+			row.gpu,
+			FONT_BODY,
+			palette.text,
+			{hw_clay.fixed(PANEL_STAT_GPU_WIDTH), hw_clay.grow()},
 			.Right,
 		)
 	}
@@ -1475,6 +1501,11 @@ panel_settings_rows :: proc(ctx: ^hw_clay.Context, palette: Panel_Palette) {
 
 	panel_settings_row_open(ctx, row_index)
 	panel_push_checkbox(ctx, hw_clay.id("check-cpu"), "CPU", settings.draft.show_cpu, palette)
+	hw_clay.pop_element(ctx)
+	row_index += 1
+
+	panel_settings_row_open(ctx, row_index)
+	panel_push_checkbox(ctx, hw_clay.id("check-gpu"), "GPU", settings.draft.show_gpu, palette)
 	hw_clay.pop_element(ctx)
 	row_index += 1
 

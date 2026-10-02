@@ -29,6 +29,7 @@ Mach_Timebase :: struct {
 
 Sampler :: struct {
 	previous_total: map[posix.pid_t]u64, // pid -> cumulative CPU ticks
+	previous_gpu:   map[posix.pid_t]u64, // pid -> cumulative GPU nanoseconds
 	last_tick:      time.Tick,
 	ticks_to_seconds: f64,
 	has_previous:   bool,
@@ -36,6 +37,7 @@ Sampler :: struct {
 
 sampler_destroy :: proc(sampler: ^Sampler) {
 	delete(sampler.previous_total)
+	delete(sampler.previous_gpu)
 }
 
 // sampler_scan returns one sample per process whose rusage could be read, with
@@ -70,6 +72,8 @@ sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []
 		wall_seconds = time.duration_seconds(time.tick_diff(sampler.last_tick, now))
 	}
 
+	gpu_totals := gpu_time_by_pid(context.allocator)
+
 	previous := sampler.previous_total
 	fresh := make(map[posix.pid_t]u64, len(pids), context.allocator)
 	samples := make([dynamic]Process_Sample, 0, len(pids), scratch)
@@ -95,18 +99,27 @@ sampler_scan :: proc(sampler: ^Sampler, scratch := context.temp_allocator) -> []
 			fraction = f64(total-old_total) * sampler.ticks_to_seconds / wall_seconds
 		}
 
+		gpu_total := gpu_totals[pid]
+		gpu_fraction: f64
+		if old_gpu, found := sampler.previous_gpu[pid]; found && wall_seconds > 0 && gpu_total >= old_gpu {
+			gpu_fraction = f64(gpu_total-old_gpu) / 1e9 / wall_seconds
+		}
+
 		fresh[pid] = total
 		name := filepath.base(string(path_buffer[:path_length]))
 		append(&samples, Process_Sample{
 			pid          = i32(pid),
 			name         = strings.clone(name, scratch),
 			cpu_fraction = fraction,
+			gpu_fraction = gpu_fraction,
 			memory_bytes = usage.ri_phys_footprint,
 		})
 	}
 
 	delete(previous) // counters of exited processes disappear with the old map
+	delete(sampler.previous_gpu)
 	sampler.previous_total = fresh
+	sampler.previous_gpu = gpu_totals
 	sampler.last_tick = now
 	sampler.has_previous = true
 	return samples[:]
