@@ -6,7 +6,7 @@ package activity_monitor
 
 import "core:testing"
 import hw_clay "hw_clay:."
-import hw_clay_ui "hw_clay:ui_framework"
+import hw_clay_ui "ui_framework:clay"
 import coretext "ui_framework:coretext"
 import draw "ui_framework:draw"
 

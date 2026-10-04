@@ -83,7 +83,7 @@ reports runaway CPU and memory and never kills anything.
   `panel_check_geometry` logs a `panel_geometry` event when the window or
   drawable height disagrees with the layout height: that mismatch is the
   signature of a stale frame, and the event keeps the numbers for next time.
-- The panel draws with hw_clay + `hw_clay:ui_framework` (CoreText, draw list,
+- The panel draws with hw_clay + `ui_framework:clay` (CoreText, draw list,
   Metal); the build needs the `hw_clay` and `ui_framework` collections. Do not
   reintroduce AppKit view hierarchies for the panel content: layout, text, and
   scrolling all run through the draw list. The display link stays paused unless

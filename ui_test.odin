@@ -7,7 +7,7 @@ import "core:time"
 import draw "ui_framework:draw"
 import coretext "ui_framework:coretext"
 import hw_clay "hw_clay:."
-import hw_clay_ui "hw_clay:ui_framework"
+import hw_clay_ui "ui_framework:clay"
 
 test_stats :: proc() -> Stat_Selection {
 	return {cpu = true, memory = true, window_cpu = true, window_memory = true}
