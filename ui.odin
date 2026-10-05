@@ -7,6 +7,7 @@
 package activity_monitor
 
 import "base:runtime"
+import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -78,6 +79,7 @@ Ui_Snapshot :: struct {
 	process_count: int,
 	config:        Config,
 	rows:          []Ui_Row,
+	groups_text:   string, // for the Copy button
 }
 
 Ui_State :: struct {
@@ -776,23 +778,215 @@ ui_sort_now :: proc() {
 	ui_snapshot_reorder(snapshot)
 }
 
-DIAGNOSTICS_LOG_LINES :: 30
+DIAGNOSTICS_PROCESSES_PER_GROUP :: 10
+DIAGNOSTICS_LOG_LINES :: 2000
+DIAGNOSTICS_OTHER_EVENTS :: 10
+
+// ui_groups_text lists every group above the panel floors with its heaviest
+// processes, for the Copy button. Sampler thread only; the text belongs to the
+// snapshot.
+ui_groups_text :: proc(
+	groups: []Group_Sample,
+	samples: []Process_Sample,
+	trends: []Group_Trend,
+	config: Config,
+	allocator: runtime.Allocator,
+) -> string {
+	by_pid := make(map[i32]Process_Sample, len(samples), context.temp_allocator)
+	for sample in samples {
+		by_pid[sample.pid] = sample
+	}
+	trend_by_name := make(map[string]Group_Trend, len(trends), context.temp_allocator)
+	for trend in trends {
+		trend_by_name[trend.name] = trend
+	}
+	ranked := make([dynamic]Ranked_Group, 0, len(groups), context.temp_allocator)
+	for group in groups {
+		cpu_avg := group.cpu_percent
+		if trend, found := trend_by_name[group.name]; found {
+			cpu_avg = trend.cpu_avg
+		}
+		append(&ranked, Ranked_Group{
+			group   = group,
+			cpu_avg = cpu_avg,
+			urgency = ui_group_urgency(cpu_avg, group.memory_bytes, config),
+		})
+	}
+	slice.sort_by(ranked[:], proc(a, b: Ranked_Group) -> bool {
+		if a.urgency != b.urgency {
+			return a.urgency > b.urgency
+		}
+		return a.group.name < b.group.name
+	})
+
+	builder := strings.builder_make(context.temp_allocator)
+	shown := 0
+	for entry in ranked {
+		group := entry.group
+		cpu_active := entry.cpu_avg >= UI_GROUP_MIN_PERCENT
+		memory_active := group.memory_bytes >= u64(UI_GROUP_MEMORY_MIN_MB) * (1 << 20)
+		if !cpu_active && !memory_active {
+			continue
+		}
+		if shown >= UI_GROUP_LIMIT {
+			break
+		}
+		shown += 1
+		fmt.sbprintf(
+			&builder,
+			"%d. %s x%d: cpu %s, gpu %s, memory %s",
+			shown,
+			group.name,
+			group.count,
+			percent_text(group.cpu_percent, context.temp_allocator),
+			percent_text(ui_group_gpu(group, by_pid) * 100, context.temp_allocator),
+			format_bytes(group.memory_bytes),
+		)
+		if trend, found := trend_by_name[group.name]; found {
+			fmt.sbprintf(
+				&builder,
+				"; window: cpu avg %s, cpu peak %s, memory peak %s, memory change %s",
+				percent_text(trend.cpu_avg, context.temp_allocator),
+				percent_text(trend.cpu_peak, context.temp_allocator),
+				format_bytes(trend.memory_peak),
+				format_bytes_delta(trend.memory_growth),
+			)
+		}
+		strings.write_byte(&builder, '\n')
+
+		members := make([dynamic]Process_Sample, 0, len(group.pids), context.temp_allocator)
+		for pid in group.pids {
+			if sample, found := by_pid[pid]; found {
+				append(&members, sample)
+			}
+		}
+		slice.sort_by(members[:], proc(a, b: Process_Sample) -> bool {
+			if a.memory_bytes != b.memory_bytes {
+				return a.memory_bytes > b.memory_bytes
+			}
+			return a.pid < b.pid
+		})
+		for member in members[:min(len(members), DIAGNOSTICS_PROCESSES_PER_GROUP)] {
+			fmt.sbprintf(
+				&builder,
+				"    pid %d: cpu %s, gpu %s, memory %s\n",
+				member.pid,
+				percent_text(member.cpu_fraction * 100, context.temp_allocator),
+				percent_text(member.gpu_fraction * 100, context.temp_allocator),
+				format_bytes(member.memory_bytes),
+			)
+		}
+		if len(members) > DIAGNOSTICS_PROCESSES_PER_GROUP {
+			fmt.sbprintf(&builder, "    ... and %d more, by memory\n", len(members) - DIAGNOSTICS_PROCESSES_PER_GROUP)
+		}
+	}
+	return strings.clone(strings.to_string(builder), allocator)
+}
+
+ui_group_gpu :: proc(group: Group_Sample, by_pid: map[i32]Process_Sample) -> f64 {
+	total: f64
+	for pid in group.pids {
+		if sample, found := by_pid[pid]; found {
+			total += sample.gpu_fraction
+		}
+	}
+	return total
+}
+
+Event_Summary :: struct {
+	count:        int,
+	first, last:  string,
+	processes:    int,
+	cpu_percent:  f64,
+	memory_bytes: f64,
+}
+
+// ui_events_text condenses the event log: repeated alerts collapse to one line
+// per kind and name with a count and time span, and the other events are
+// listed by their last few occurrences.
+ui_events_text :: proc(path: string, builder: ^strings.Builder) {
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	if err != nil {
+		return
+	}
+	lines := strings.split_lines(strings.trim_space(string(data)), context.temp_allocator)
+	lines = lines[max(0, len(lines) - DIAGNOSTICS_LOG_LINES):]
+
+	summaries := make(map[string]Event_Summary, 8, context.temp_allocator)
+	order := make([dynamic]string, context.temp_allocator)
+	others := make([dynamic]string, context.temp_allocator)
+	for line in lines {
+		value, parse_err := json.parse(transmute([]byte)line, allocator = context.temp_allocator)
+		object, is_object := value.(json.Object)
+		if parse_err != nil || !is_object {
+			continue
+		}
+		event, _ := object["event"].(json.String)
+		time_text, _ := object["time"].(json.String)
+		if event != "alert" {
+			append(&others, line)
+			continue
+		}
+		kind, _ := object["kind"].(json.String)
+		name, _ := object["name"].(json.String)
+		key := fmt.tprintf("%s %s", kind, name)
+		summary, seen := summaries[key]
+		if !seen {
+			append(&order, key)
+			summary.first = time_text
+		}
+		summary.count += 1
+		summary.last = time_text
+		processes, _ := object["processes"].(json.Float)
+		cpu, _ := object["cpu_percent"].(json.Float)
+		memory, _ := object["memory_bytes"].(json.Float)
+		summary.processes = int(processes)
+		summary.cpu_percent = cpu
+		summary.memory_bytes = memory
+		summaries[key] = summary
+	}
+
+	strings.write_string(builder, "\nalerts, repeats collapsed:\n")
+	if len(order) == 0 {
+		strings.write_string(builder, "none\n")
+	}
+	for key in order {
+		summary := summaries[key]
+		fmt.sbprintf(
+			builder,
+			"%s: %d alerts, %s to %s; latest %d processes, cpu %s, memory %s\n",
+			key,
+			summary.count,
+			summary.first,
+			summary.last,
+			summary.processes,
+			percent_text(summary.cpu_percent, context.temp_allocator),
+			format_bytes(u64(summary.memory_bytes)),
+		)
+	}
+	strings.write_string(builder, "\nother recent events (JSONL):\n")
+	for line in others[max(0, len(others) - DIAGNOSTICS_OTHER_EVENTS):] {
+		strings.write_string(builder, line)
+		strings.write_byte(builder, '\n')
+	}
+}
 
 // ui_diagnostics_text renders the current snapshot, the running settings and
-// the tail of the event log as plain text for pasting into an LLM.
+// the event log as plain text for pasting into an LLM.
 ui_diagnostics_text :: proc(snapshot: ^Ui_Snapshot, allocator := context.temp_allocator) -> string {
 	config := snapshot.config
 	builder := strings.builder_make(allocator)
 	fmt.sbprintf(&builder, "hw_activity_monitor %s diagnostics\n", VERSION)
 	fmt.sbprintf(
 		&builder,
-		"%s of all cores, %d processes\n",
+		"%s of all cores (%d cores), %d processes\n",
 		percent_text(snapshot.total_percent),
+		os.get_processor_core_count(),
 		snapshot.process_count,
 	)
 	fmt.sbprintf(
 		&builder,
-		"settings: interval %.0fs, window %.0fs, cpu budget %.0f%%, memory budget %.0f MB, sustained %.0fs, cooldown %.0fs\n",
+		"settings: interval %.0fs, window %.0fs, cpu budget %.0f%% of one core, memory budget %.0f MB per group, sustained %.0fs, cooldown %.0fs\n",
 		config.interval_seconds,
 		config.window_seconds,
 		config.cpu_percent,
@@ -800,29 +994,10 @@ ui_diagnostics_text :: proc(snapshot: ^Ui_Snapshot, allocator := context.temp_al
 		config.sustained_seconds,
 		config.cooldown_seconds,
 	)
-	strings.write_string(&builder, "\ncolumns: rank, process, CPU, GPU, memory, windowed CPU, windowed memory change\n")
-	for row in snapshot.rows {
-		switch row.kind {
-		case .Header:
-		case .Note:
-			fmt.sbprintf(&builder, "    %s\n", row.name)
-		case .Group:
-			fmt.sbprintf(&builder, "%d. %s | %s | %s | %s | %s | %s\n", row.rank, row.name, row.cpu, row.gpu, row.memory, row.window_cpu, row.window_memory)
-		case .Process:
-			fmt.sbprintf(&builder, "    %d. %s (pid %d) | %s | %s | %s\n", row.rank, row.name, row.pid, row.cpu, row.gpu, row.memory)
-		}
-	}
+	strings.write_string(&builder, "\ngroups by urgency (same-named processes), heaviest processes by memory:\n")
+	strings.write_string(&builder, snapshot.groups_text)
 	if monitor.log.path != "" {
-		data, err := os.read_entire_file(monitor.log.path, context.temp_allocator)
-		if err == nil {
-			lines := strings.split_lines(strings.trim_space(string(data)), context.temp_allocator)
-			first := max(0, len(lines) - DIAGNOSTICS_LOG_LINES)
-			strings.write_string(&builder, "\nrecent events (JSONL):\n")
-			for line in lines[first:] {
-				strings.write_string(&builder, line)
-				strings.write_byte(&builder, '\n')
-			}
-		}
+		ui_events_text(monitor.log.path, &builder)
 	}
 	return strings.to_string(builder)
 }
@@ -1001,6 +1176,7 @@ ui_post_snapshot :: proc(
 		process_count = options.process_count,
 		config        = options.config,
 		rows          = rows,
+		groups_text   = ui_groups_text(groups, samples, trends, options.config, context.allocator),
 	}
 	dispatch_async_f(&_dispatch_main_q, snapshot, ui_apply_snapshot_c)
 }
@@ -1063,5 +1239,6 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 		}
 	}
 	delete(snapshot.rows, snapshot.allocator)
+	delete(snapshot.groups_text, snapshot.allocator)
 	free(snapshot, snapshot.allocator)
 }

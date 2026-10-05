@@ -64,7 +64,6 @@ panel_process_rank_text :: proc(rank: int) -> string {
 PANEL_ROW_GAP :: 6
 PANEL_PADDING_HORIZONTAL :: u16(6)
 PANEL_PADDING_VERTICAL :: u16(6)
-PANEL_CORNER_RADIUS :: f32(10)
 PANEL_FRAME_SECONDS :: f32(1.0 / 60.0)
 UI_GROUP_LIMIT :: 10
 UI_GROUP_MIN_PERCENT :: 0.5
@@ -691,7 +690,6 @@ panel_build_root :: proc(
 			},
 		},
 		background_color = palette.background,
-		corner_radius    = hw_clay.corner_radius_all(PANEL_CORNER_RADIUS),
 		// Only the outline: border_all would also set between_children, which
 		// draws separator lines between the settings rows.
 		border = {
