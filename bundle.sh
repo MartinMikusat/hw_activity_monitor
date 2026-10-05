@@ -14,6 +14,8 @@ EXECUTABLE="$APP_DIR/Contents/MacOS/hw_activity_monitor"
 
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp -f "$BINARY" "$EXECUTABLE"
+mkdir -p "$APP_DIR/Contents/Resources"
+cp -f "$(dirname -- "$0")/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # The bundle identifier is what lets UNUserNotificationCenter deliver banners
 # attributed to this app; the version keys are read by the updater and shown by
@@ -25,6 +27,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <dict>
 	<key>CFBundleExecutable</key>
 	<string>hw_activity_monitor</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$LABEL</string>
 	<key>CFBundleInfoDictionaryVersion</key>
