@@ -16,6 +16,7 @@ import "core:time"
 Process_Sample :: struct {
 	pid:          i32,
 	name:         string,
+	detail:       string, // what it runs (script, helper role, working directory); empty when the name says it
 	cpu_fraction: f64, // fraction of one core; exceeds 1.0 for multithreaded work
 	gpu_fraction: f64, // fraction of the GPU since the last scan; can exceed 1.0 with concurrent queues
 	memory_bytes: u64, // physical footprint, the number Activity Monitor calls "Memory"

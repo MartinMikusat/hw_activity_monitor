@@ -113,7 +113,7 @@ reports runaway CPU and memory and never kills anything.
   the stat columns: it pushes the same cells as the data rows (and, in the
   maximized view, the same label and chart columns as a block) so every label
   lines up with the values under it.
-- Design: `sampler.odin` (libproc), `gpu.odin` (IORegistry GPU time per pid,
+- Design: `sampler.odin` (libproc), `process_detail.odin` (per-pid label from argv and cwd: script behind python/node, Chromium helper role, tool name for version-named binaries; read once per pid and cached), `gpu.odin` (IORegistry GPU time per pid,
   `gpu_test.odin` drives the real registry), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
 - LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the

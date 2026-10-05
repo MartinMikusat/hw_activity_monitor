@@ -489,7 +489,7 @@ ui_build_rows :: proc(
 				name = fmt.aprintf(
 					"%s%s",
 					ui_elide(
-						member.name,
+						ui_process_label(member),
 						max(8, name_chars-PANEL_PROCESS_RANK_CHARS-utf8.rune_count(process_suffix)),
 						context.temp_allocator,
 					),
@@ -869,8 +869,9 @@ ui_groups_text :: proc(
 		for member in members[:min(len(members), DIAGNOSTICS_PROCESSES_PER_GROUP)] {
 			fmt.sbprintf(
 				&builder,
-				"    pid %d: cpu %s, gpu %s, memory %s\n",
+				"    pid %d%s: cpu %s, gpu %s, memory %s\n",
 				member.pid,
+				member.detail == "" ? "" : fmt.tprintf(" (%s)", member.detail),
 				percent_text(member.cpu_fraction * 100, context.temp_allocator),
 				percent_text(member.gpu_fraction * 100, context.temp_allocator),
 				format_bytes(member.memory_bytes),
@@ -1241,4 +1242,8 @@ ui_snapshot_destroy :: proc(snapshot: ^Ui_Snapshot) {
 	delete(snapshot.rows, snapshot.allocator)
 	delete(snapshot.groups_text, snapshot.allocator)
 	free(snapshot, snapshot.allocator)
+}
+
+ui_process_label :: proc(sample: Process_Sample) -> string {
+	return sample.detail if sample.detail != "" else sample.name
 }
