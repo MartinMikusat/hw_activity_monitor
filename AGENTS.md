@@ -4,7 +4,10 @@ Standalone macOS watchdog daemon (package `activity_monitor`), notify-only: it
 reports runaway CPU and memory and never kills anything.
 
 - Build with `./build.sh [debug|release]`. Test with `./test.sh`. Install and
-  remove with `./install.sh` / `./uninstall.sh`.
+  remove with `./install.sh` / `./uninstall.sh`. `./dev.sh` is the development
+  watcher: it boots out the installed LaunchAgent, runs one bare debug binary
+  (outside a `.app`, so it never self-updates and notifications fall back to
+  `osascript`), rebuilds on source changes, and restores the agent on exit.
 - UI: `ui.odin` owns the status item and the snapshot model; `panel.odin` owns
   the clay layout and the draw call; `panel_window.odin` owns the NSPanel,
   CAMetalLayer, input, and the display-link clock. The main thread only draws; `monitor_tick` runs on
