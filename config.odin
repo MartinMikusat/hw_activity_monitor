@@ -33,6 +33,7 @@ Config :: struct {
 	show_window_cpu:   bool,
 	show_window_memory: bool,
 	auto_update:       bool,
+	launch_at_login:   bool,
 	theme:             Theme,
 }
 
@@ -79,6 +80,7 @@ config_defaults :: proc() -> Config {
 		show_window_cpu   = true,
 		show_window_memory = true,
 		auto_update       = true,
+		launch_at_login   = true,
 		theme             = .System,
 	}
 }

@@ -98,7 +98,8 @@ their default):
   "show_memory": true,
   "show_window_cpu": true,
   "show_window_memory": true,
-  "auto_update": true
+  "auto_update": true,
+  "launch_at_login": true
 }
 ```
 
@@ -122,6 +123,9 @@ their default):
   instant memory, windowed CPU average, and windowed memory change.
 - `auto_update` lets the installed app update itself from GitHub releases;
   `false` keeps it on the installed build.
+- `launch_at_login` registers the app as a login item (System Settings > General >
+  Login Items) when it runs from `hw_activity_monitor.app` and no LaunchAgent
+  started it; `false` stops registering it.
 
 The settings modal edits `window_seconds`, `interval_seconds`, and the
 `show_*` keys; everything else stays file-edited.

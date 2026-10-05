@@ -14,6 +14,6 @@ hw-odin test "$ROOT" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \
   -collection:hw_odin_ui_components="$ODIN_LIBS/hw_odin_ui_components" \
   -collection:native_update="$ODIN_LIBS/hw_odin_native_update" \
-  -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics"
+  -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework ServiceManagement -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics"
 "$ROOT/build.sh" release >/dev/null
 echo "[hw_activity_monitor] tests passed"

@@ -148,6 +148,7 @@ run_app :: proc(config: Config) {
 	monitor.log = log_open()
 	backend := notify_init(monitor.log)
 	update_auto_enabled = config.auto_update
+	login_item_register(config.launch_at_login)
 
 	log_event(monitor.log, "started", fmt.tprintf(
 		"\"pid\":%d,\"interval_seconds\":%.0f,\"cpu_percent\":%.0f,\"memory_mb\":%.0f,\"sustained_seconds\":%.0f,\"cooldown_seconds\":%.0f,\"notifications\":%s",

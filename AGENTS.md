@@ -54,6 +54,10 @@ reports runaway CPU and memory and never kills anything.
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
   the daemon immediately, so a plain exit is not a quit. Its "Check for Updates"
   starts one check on its own thread.
+- `login_item.odin` registers the app with `SMAppService` at startup (config key
+  `launch_at_login`, default on) only when it runs inside `hw_activity_monitor.app`
+  and launchd did not start it (`XPC_SERVICE_NAME`), so a LaunchAgent copy is
+  never started twice.
 - Updates match hw_fileManager: `update.odin` drives `hw_odin_native_update`
   (`-collection:native_update`), `version.odin` holds the compiled-in
   `HW_UPDATE_VERSION`, `HW_UPDATE_FEED_URL` and `HW_UPDATE_TEAM_ID` (`VERSION`
@@ -124,7 +128,7 @@ reports runaway CPU and memory and never kills anything.
   events. Events: `started`, `alert` (kind `cpu` or `memory`, name, processes,
   cpu_percent, memory_bytes, sustained_seconds, pids, notified),
   `settings_saved`, `panel_geometry` (a window/drawable size mismatch),
-  `quit`, `update_available`, `update_installed`, `update_failed`,
+  `quit`, `login_item_failed`, `update_available`, `update_installed`, `update_failed`,
   `notification_authorization`, `notification_failed`. Crash output stays in
   `~/Library/Logs/hw_activity_monitor.launchd.log`.
 - Sampling uses libproc bindings from `core:sys/darwin/proc.odin`

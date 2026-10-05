@@ -37,7 +37,7 @@ hw-odin build "$ROOT" $FLAGS \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \
   -collection:hw_odin_ui_components="$ODIN_LIBS/hw_odin_ui_components" \
   -collection:native_update="$ODIN_LIBS/hw_odin_native_update" \
-  -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics" \
+  -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework ServiceManagement -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics" \
   -out:"$BUILD/hw_activity_monitor"
 echo "[hw_activity_monitor] built $BUILD/hw_activity_monitor ($MODE)"
 if [ "$MODE" = "release" ]; then
