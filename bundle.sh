@@ -2,8 +2,8 @@
 # bundle.sh <app_dir> <binary> <version>
 #
 # Creates a minimal LSUIElement .app bundle around an already built binary and
-# ad-hoc signs it. install.sh and release.sh share this so the installed app and
-# the release artifact are the same shape.
+# ad-hoc signs it. build.sh packages the release artifact with it, and the release tool
+# signs that bundle.
 set -eu
 
 APP_DIR=$1

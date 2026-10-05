@@ -5,7 +5,7 @@
 # The installed LaunchAgent is booted out while the watcher runs (two daemons
 # would show two status items and double every alert) and bootstrapped again on
 # exit. The dev binary runs bare, outside a .app, so the updater never touches
-# it; notifications fall back to osascript, so test those through ./install.sh.
+# it; notifications fall back to osascript, so test those from an installed app bundle.
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -88,7 +88,7 @@ suspend_installed_agent() {
 resume_installed_agent() {
   if [ "$AGENT_WAS_LOADED" = true ] && [ -f "$PLIST" ]; then
     launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null ||
-      printf '[%s] could not restart the installed agent; run ./install.sh\n' "$NAME" >&2
+      printf '[%s] could not restart the installed agent\n' "$NAME" >&2
   fi
 }
 

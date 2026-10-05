@@ -3,8 +3,8 @@
 Standalone macOS watchdog daemon (package `activity_monitor`), notify-only: it
 reports runaway CPU and memory and never kills anything.
 
-- Build with `./build.sh [debug|release]`. Test with `./test.sh`. Install and
-  remove with `./install.sh` / `./uninstall.sh`. `./dev.sh` is the development
+- Build with `./build.sh [debug|release]`. Test with `./test.sh`. Remove an
+  installed copy with `./uninstall.sh`; there is no install script. `./dev.sh` is the development
   watcher: it boots out the installed LaunchAgent, runs one bare debug binary
   (outside a `.app`, so it never self-updates and notifications fall back to
   `osascript`), rebuilds on source changes, and restores the agent on exit.
@@ -62,15 +62,15 @@ reports runaway CPU and memory and never kills anything.
   thread; the library verifies size, SHA-256 and a code requirement pinning the
   Developer ID team, bundle ID and version. A daemon has no quit to wait for, so
   a verified update is swapped in at once and launchd restarts it. Only a copy
-  running as `hw_activity_monitor.app` updates, and `./install.sh` builds an
-  unversioned copy that does not. The log is guarded by a global mutex because
+  running as `hw_activity_monitor.app` updates; a local `build.sh` copy has no
+  version and does not. The log is guarded by a global mutex because
   the update thread is a second writer.
 - Release only when the operator asks for it, with the version they name:
   `python3 scripts/release_macos.py build <version> --notary-profile
   delta-support-native`, then `python3 scripts/release_macos.py publish
   dist.noindex/<version>` (clean, pushed commit; notarization uploads to Apple).
-  The expected flow for a change is: implement it, commit, `./install.sh` and
-  let the operator confirm the behavior on screen; release only after that
+  The expected flow for a change is: implement it, commit, and let the
+  operator install it and confirm the behavior on screen; release only after that
   confirmation. A published release reaches every installed copy on its next
   check, so releasing is a distribution decision, not a commit step. First
   install of a release: `ditto -x -k dist.noindex/<version>/hw_activity_monitor-<version>.zip
@@ -116,8 +116,8 @@ reports runaway CPU and memory and never kills anything.
 - Design: `sampler.odin` (libproc), `process_detail.odin` (per-pid label from argv and cwd: script behind python/node, Chromium helper role, tool name for version-named binaries; read once per pid and cached), `gpu.odin` (IORegistry GPU time per pid,
   `gpu_test.odin` drives the real registry), `rules.odin` (pure rule engine,
   `rules_test.odin` covers it), `config.odin`, `main.odin`, `log.odin`.
-- LaunchAgent label `com.halwayland.hw_activity_monitor`; install.sh builds the
-  minimal `~/Applications/hw_activity_monitor.app` bundle and loads the agent.
+- LaunchAgent label `com.halwayland.hw_activity_monitor`; `bundle.sh` builds the
+  minimal `.app` bundle for the release tool.
 - Event log: append-only JSONL at `~/Library/Logs/hw_activity_monitor.jsonl`,
   one object per line, written by `log.odin`. This is the agent-facing record;
   do not turn it into a rewritten snapshot or add high-frequency sampling
@@ -139,7 +139,7 @@ reports runaway CPU and memory and never kills anything.
   work from inside the bundle. A bare binary falls back to `osascript`, which
   macOS usually drops; build.sh and test.sh link `-framework Foundation
   -framework UserNotifications` for the class lookups.
-- The bundle is `LSUIElement` and ad-hoc signed by install.sh. Do not switch it
+- The bundle is `LSUIElement` and ad-hoc signed by bundle.sh. Do not switch it
   to `LSBackgroundOnly`: that build is refused notification authorization with
   "Notifications are not allowed for this application". Callbacks need the run
   loop pump in `wait_with_run_loop`.

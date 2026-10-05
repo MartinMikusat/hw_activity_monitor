@@ -28,18 +28,14 @@ separate small numbers.
 ```
 ./build.sh [debug|release]   # build
 ./test.sh                    # rule-engine tests + compile check
-./install.sh                 # build, install the app bundle, load LaunchAgent
 ./uninstall.sh               # unload and remove bundle (config and logs kept)
 ./dev.sh                     # watcher: rebuild and relaunch on source changes
 hw_activity_monitor --once   # sample twice, print the busiest groups with CPU and memory
 hw_activity_monitor --version
 ```
 
-Install copies the binary into `~/Applications/hw_activity_monitor.app` (a
-minimal `LSUIElement` bundle, ad-hoc signed) and loads
-`~/Library/LaunchAgents/com.halwayland.hw_activity_monitor.plist`
-(`RunAtLoad`, `KeepAlive`, `ProcessType Background`). The first installed run
-asks for notification permission; without it alerts only reach the log.
+The app is installed by hand: unzip a release into `~/Applications`. The first
+run asks for notification permission; without it alerts only reach the log.
 
 ## Menu bar
 
@@ -69,7 +65,7 @@ history survives. Escape or clicking outside closes the modal without saving.
 Right-clicking the status item opens its menu: **Open Settings** brings up the
 panel already in the modal, and **Quit hw_activity_monitor** stops the daemon.
 Because the LaunchAgent keeps the process alive, Quit unloads the agent first;
-it stays stopped until `./install.sh` runs again or you log back in.
+it stays stopped until you log back in or load the agent again.
 
 The panel is not an AppKit view hierarchy: `panel.odin` lays the list out with
 hw_clay every frame and draws it through the ui_framework renderer (CoreText
@@ -125,7 +121,7 @@ their default):
 - `show_*` keys pick the panel's five stat columns: instant CPU, instant GPU,
   instant memory, windowed CPU average, and windowed memory change.
 - `auto_update` lets the installed app update itself from GitHub releases;
-  `false` keeps it on the installed build until you run `./install.sh` again.
+  `false` keeps it on the installed build.
 
 The settings modal edits `window_seconds`, `interval_seconds`, and the
 `show_*` keys; everything else stays file-edited.
@@ -143,7 +139,7 @@ restarts through launchd. Trust is the code signature, not the feed.
   `update_failed` (with the failing stage). A missing release or no network is
   not a failure and stays silent.
 - Builds without a compiled-in release version never update, including
-  `./install.sh` copies and `build/hw_activity_monitor`.
+  `build/hw_activity_monitor`.
 - **Check for Updates** in the status menu runs one check immediately.
 - Cutting a release: `python3 scripts/release_macos.py build <version>
   --notary-profile <profile>`, then `python3 scripts/release_macos.py publish
