@@ -8,6 +8,7 @@ package activity_monitor
 
 import "base:runtime"
 import "core:fmt"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -773,6 +774,72 @@ ui_sort_now :: proc() {
 	}
 	ui_order_adopt(&panel_order, snapshot.rows)
 	ui_snapshot_reorder(snapshot)
+}
+
+DIAGNOSTICS_LOG_LINES :: 30
+
+// ui_diagnostics_text renders the current snapshot, the running settings and
+// the tail of the event log as plain text for pasting into an LLM.
+ui_diagnostics_text :: proc(snapshot: ^Ui_Snapshot, allocator := context.temp_allocator) -> string {
+	config := snapshot.config
+	builder := strings.builder_make(allocator)
+	fmt.sbprintf(&builder, "hw_activity_monitor %s diagnostics\n", VERSION)
+	fmt.sbprintf(
+		&builder,
+		"%s of all cores, %d processes\n",
+		percent_text(snapshot.total_percent),
+		snapshot.process_count,
+	)
+	fmt.sbprintf(
+		&builder,
+		"settings: interval %.0fs, window %.0fs, cpu budget %.0f%%, memory budget %.0f MB, sustained %.0fs, cooldown %.0fs\n",
+		config.interval_seconds,
+		config.window_seconds,
+		config.cpu_percent,
+		config.memory_mb,
+		config.sustained_seconds,
+		config.cooldown_seconds,
+	)
+	strings.write_string(&builder, "\ncolumns: rank, process, CPU, GPU, memory, windowed CPU, windowed memory change\n")
+	for row in snapshot.rows {
+		switch row.kind {
+		case .Header:
+		case .Note:
+			fmt.sbprintf(&builder, "    %s\n", row.name)
+		case .Group:
+			fmt.sbprintf(&builder, "%d. %s | %s | %s | %s | %s | %s\n", row.rank, row.name, row.cpu, row.gpu, row.memory, row.window_cpu, row.window_memory)
+		case .Process:
+			fmt.sbprintf(&builder, "    %d. %s (pid %d) | %s | %s | %s\n", row.rank, row.name, row.pid, row.cpu, row.gpu, row.memory)
+		}
+	}
+	if monitor.log.path != "" {
+		data, err := os.read_entire_file(monitor.log.path, context.temp_allocator)
+		if err == nil {
+			lines := strings.split_lines(strings.trim_space(string(data)), context.temp_allocator)
+			first := max(0, len(lines) - DIAGNOSTICS_LOG_LINES)
+			strings.write_string(&builder, "\nrecent events (JSONL):\n")
+			for line in lines[first:] {
+				strings.write_string(&builder, line)
+				strings.write_byte(&builder, '\n')
+			}
+		}
+	}
+	return strings.to_string(builder)
+}
+
+// ui_copy_diagnostics puts the diagnostics on the general pasteboard. Main thread only.
+ui_copy_diagnostics :: proc() {
+	snapshot := ui_state.snapshot
+	if snapshot == nil {
+		return
+	}
+	text := ui_diagnostics_text(snapshot)
+	pasteboard := msg_id0(objc_getClass("NSPasteboard"), sel_registerName("generalPasteboard"))
+	if pasteboard == nil {
+		return
+	}
+	msg_void0(pasteboard, sel_registerName("clearContents"))
+	msg_id_id2(pasteboard, sel_registerName("setString:forType:"), nsstring(text), nsstring("public.utf8-plain-text"))
 }
 
 // --------------------------------------------------------------------- app

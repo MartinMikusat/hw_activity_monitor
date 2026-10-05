@@ -748,6 +748,7 @@ panel_push_list_header :: proc(
 	})
 	_, color := panel_row_style(row, palette)
 	panel_push_text(ctx, row.name, FONT_BODY, color, {hw_clay.grow(), hw_clay.grow()}, .Left, true)
+	panel_push_button(ctx, hw_clay.id("panel-copy"), "Copy", palette)
 	panel_push_button(ctx, hw_clay.id("panel-sort"), "Sort", palette)
 	if mode == .Maximized {
 		panel_push_button(ctx, hw_clay.id("panel-restore"), "Restore", palette)
@@ -1558,6 +1559,10 @@ panel_pointer_position :: proc() -> hw_clay.Vector2 {
 // panel_click handles the ids both trees share: the header buttons and the mode
 // switch. It returns true when the id was consumed.
 panel_click :: proc(id: hw_clay.Element_Id) -> bool {
+	if id == hw_clay.id("panel-copy") {
+		ui_copy_diagnostics()
+		return true
+	}
 	if id == hw_clay.id("panel-sort") {
 		ui_sort_now()
 		panel_mark_dirty()
