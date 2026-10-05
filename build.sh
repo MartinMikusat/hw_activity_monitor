@@ -16,6 +16,10 @@ case "$MODE" in
     ;;
   release)
     FLAGS="-o:speed"
+    # The release tool compiles the version and feed in; without them the app never updates.
+    if [ -n "${HW_UPDATE_VERSION:-}" ]; then
+      FLAGS="$FLAGS -define:HW_UPDATE_VERSION=$HW_UPDATE_VERSION -define:HW_UPDATE_FEED_URL=$HW_UPDATE_FEED_URL -define:HW_UPDATE_TEAM_ID=$HW_UPDATE_TEAM_ID"
+    fi
     ;;
   *)
     echo "usage: ./build.sh [debug|release]" >&2
@@ -32,6 +36,12 @@ hw-odin build "$ROOT" $FLAGS \
   -collection:hw_clay="$ODIN_LIBS/hw_clay" \
   -collection:ui_framework="$ODIN_LIBS/hw_odin_ui_framework" \
   -collection:hw_odin_ui_components="$ODIN_LIBS/hw_odin_ui_components" \
+  -collection:native_update="$ODIN_LIBS/hw_odin_native_update" \
   -extra-linker-flags:"-framework AppKit -framework Foundation -framework UserNotifications -framework Metal -framework QuartzCore -framework CoreText -framework CoreGraphics" \
   -out:"$BUILD/hw_activity_monitor"
 echo "[hw_activity_monitor] built $BUILD/hw_activity_monitor ($MODE)"
+if [ "$MODE" = "release" ]; then
+  # The release tool signs, notarizes and packages this bundle.
+  rm -rf "$BUILD/hw_activity_monitor-release.app"
+  "$ROOT/bundle.sh" "$BUILD/hw_activity_monitor-release.app" "$BUILD/hw_activity_monitor" "${HW_UPDATE_VERSION:-0.0.0}"
+fi

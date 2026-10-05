@@ -1,3 +1,4 @@
 build/
 *.dSYM/
 .DS_Store
+dist.noindex/

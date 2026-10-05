@@ -54,22 +54,27 @@ reports runaway CPU and memory and never kills anything.
   boots out the LaunchAgent before exiting: `KeepAlive` would otherwise restart
   the daemon immediately, so a plain exit is not a quit. Its "Check for Updates"
   starts one check on its own thread.
-- Updates live in `update.odin` and version identity in `version.odin` (the
-  single source; `install.sh`, `release.sh`, and the updater all read it).
-  `update_worker` checks the latest GitHub release at startup and daily on its
-  own thread, then verifies the download's SHA-256, the bundle's code signature,
-  and the bundle's `CFBundleShortVersionString` before swapping the `.app` in
-  place (previous bundle kept as `.backup`) and restarting through launchd.
-  Only executables inside a `.app` update themselves. `release.sh` (with
-  `bundle.sh`) publishes the assets the updater expects by name; changing those
-  names is a contract change. The log is guarded by a global mutex because the
-  update thread is a second writer.
-- Release only when the operator asks for it. The expected flow for a change is:
-  implement it, commit, install it locally (`./install.sh`) and let the operator
-  confirm the behavior on screen; bump `VERSION` and publish (`./release.sh`)
-  only after that confirmation and only on an explicit request. A published
-  release reaches every installed copy on its next check, so releasing is a
-  distribution decision, not a commit step.
+- Updates match hw_fileManager: `update.odin` drives `hw_odin_native_update`
+  (`-collection:native_update`), `version.odin` holds the compiled-in
+  `HW_UPDATE_VERSION`, `HW_UPDATE_FEED_URL` and `HW_UPDATE_TEAM_ID` (`VERSION`
+  is `dev` without them, and a build without them never updates). The worker
+  checks `releases/latest/download/update.json` at startup and hourly on its own
+  thread; the library verifies size, SHA-256 and a code requirement pinning the
+  Developer ID team, bundle ID and version. A daemon has no quit to wait for, so
+  a verified update is swapped in at once and launchd restarts it. Only a copy
+  running as `hw_activity_monitor.app` updates, and `./install.sh` builds an
+  unversioned copy that does not. The log is guarded by a global mutex because
+  the update thread is a second writer.
+- Release only when the operator asks for it, with the version they name:
+  `python3 scripts/release_macos.py build <version> --notary-profile
+  delta-support-native`, then `python3 scripts/release_macos.py publish
+  dist.noindex/<version>` (clean, pushed commit; notarization uploads to Apple).
+  The expected flow for a change is: implement it, commit, `./install.sh` and
+  let the operator confirm the behavior on screen; release only after that
+  confirmation. A published release reaches every installed copy on its next
+  check, so releasing is a distribution decision, not a commit step. First
+  install of a release: `ditto -x -k dist.noindex/<version>/hw_activity_monitor-<version>.zip
+  ~/Applications`, then restart the agent.
 - The panel owns its CAMetalLayer geometry. `panel_sync_layer` sets the
   contents scale, layer frame, and drawable size; it runs whenever the window
   frame changes and again before every `nextDrawable`, because a drawable

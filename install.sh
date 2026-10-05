@@ -10,16 +10,10 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 "$ROOT/build.sh" release
 
-VERSION=$(sed -n 's/^VERSION :: "\(.*\)"/\1/p' "$ROOT/version.odin")
-if [ -z "$VERSION" ]; then
-	echo "[hw_activity_monitor] cannot read VERSION from version.odin" >&2
-	exit 1
-fi
-
 # The daemon runs inside a minimal .app bundle: a bundle identifier is what
 # lets UNUserNotificationCenter deliver banners attributed to this app.
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-"$ROOT/bundle.sh" "$APP_DIR" "$ROOT/build/hw_activity_monitor" "$VERSION"
+"$ROOT/bundle.sh" "$APP_DIR" "$ROOT/build/hw_activity_monitor" 0.0.0
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

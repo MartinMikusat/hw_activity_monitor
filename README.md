@@ -30,7 +30,7 @@ separate small numbers.
 ./test.sh                    # rule-engine tests + compile check
 ./install.sh                 # build, install the app bundle, load LaunchAgent
 ./uninstall.sh               # unload and remove bundle (config and logs kept)
-./release.sh                 # build, zip, and publish a GitHub release
+./dev.sh                     # watcher: rebuild and relaunch on source changes
 hw_activity_monitor --once   # sample twice, print the busiest groups with CPU and memory
 hw_activity_monitor --version
 ```
@@ -132,28 +132,22 @@ The settings modal edits `window_seconds`, `interval_seconds`, and the
 
 ## Updates
 
-The installed app updates itself from GitHub releases. At startup and once a
-day it fetches the latest release, compares versions, and if newer downloads the
-bundle, verifies the SHA-256 published beside the archive, checks the code
-signature and the bundle's own version, then swaps the bundle in place —
-keeping the previous one as `hw_activity_monitor.app.backup` — and restarts
-through launchd. Nothing from the download runs before the swap; the checksum
-and signature are the gate.
+A release installed as `hw_activity_monitor.app` updates itself from GitHub
+releases. At startup and hourly it fetches `update.json`, and for a newer
+version downloads the notarized archive, verifies its size and SHA-256, and
+requires the bundle to satisfy a code requirement pinning the Developer ID team,
+the bundle ID and the announced version. It then swaps the bundle in place and
+restarts through launchd. Trust is the code signature, not the feed.
 
 - Attempts land in the event log: `update_available`, `update_installed`,
   `update_failed` (with the failing stage). A missing release or no network is
   not a failure and stays silent.
-- Development binaries never update themselves: only an executable inside a
-  `.app` is replaced, so `build/hw_activity_monitor` is safe to run.
+- Builds without a compiled-in release version never update, including
+  `./install.sh` copies and `build/hw_activity_monitor`.
 - **Check for Updates** in the status menu runs one check immediately.
-- Cutting a release: bump `VERSION` in `version.odin`, commit, then run
-  `./release.sh`. It builds the bundle, zips it with a `.sha256`, and publishes
-  a GitHub release whose asset names (`hw_activity_monitor-<version>.zip` and
-  `.zip.sha256`) are the updater's contract.
-
-The trust anchor is the GitHub repository over TLS: the checksum travels in the
-same release as the archive, so it protects against a corrupted download, not
-against a compromised repository.
+- Cutting a release: `python3 scripts/release_macos.py build <version>
+  --notary-profile <profile>`, then `python3 scripts/release_macos.py publish
+  dist.noindex/<version>`.
 
 ## Notification delivery
 

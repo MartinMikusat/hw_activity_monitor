@@ -1,9 +1,14 @@
-// The single source of truth for the app version. `install.sh`, `release.sh`,
-// and the updater all read this constant (the scripts parse this file), and the
-// bundle's Info.plist is stamped from it, so the version reported by
-// `--version`, the version in the installed bundle, and the release tag cannot
-// drift apart.
+// A packaged release is built with these (scripts/release_macos.py compiles them
+// in through build.sh); every other build reports "dev" and never updates.
 
 package activity_monitor
 
-VERSION :: "1.4.0"
+UPDATE_VERSION :: #config(HW_UPDATE_VERSION, "")
+UPDATE_FEED_URL :: #config(HW_UPDATE_FEED_URL, "")
+UPDATE_TEAM_ID :: #config(HW_UPDATE_TEAM_ID, "")
+
+when UPDATE_VERSION != "" {
+	VERSION :: UPDATE_VERSION
+} else {
+	VERSION :: "dev"
+}
